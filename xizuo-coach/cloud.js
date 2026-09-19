@@ -210,7 +210,6 @@
   global.XZ_CLOUD = {
     PUBLIC_CONFIG: PUBLIC_CONFIG,
     hasSdk: hasSdk,
-    client: client,
     loadModels: loadModels,
     chat: chat,
     textModel: textModel,

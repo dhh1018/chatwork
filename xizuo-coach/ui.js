@@ -592,9 +592,8 @@
     ocrPages: ocrPages,
     openZoom: openZoom,
     renderChannelLine: renderChannelLine,
-    openSettings: openSettings, closeSettings: closeSettings,
+    openSettings: openSettings,
     reportHtml: reportHtml,
-    toMarkdown: toMarkdown,
     bindToolbar: bindToolbar
   };
 })(typeof window !== 'undefined' ? window : this);

@@ -102,7 +102,7 @@
   }
 
   global.XZ_IMG = {
-    LONG_SIDE: LONG_SIDE, QUALITY: QUALITY, FILE_MAX: FILE_MAX, MAX_PAGES: MAX_PAGES,
+    MAX_PAGES: MAX_PAGES,
     scaleSize: scaleSize,
     isImageFile: isImageFile, isHeic: isHeic,
     compress: compress

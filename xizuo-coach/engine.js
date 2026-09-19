@@ -664,12 +664,6 @@
     analyze: analyze,
     buildTeacher: buildTeacher,
     buildStudent: buildStudent,
-    detectRole: detectRole,
-    makeCtx: makeCtx,
-    strongSents: strongSents,
-    weakSents: weakSents,
-    vividScore: vividScore,
-    lex: FAM,
-    detectors: Object.keys(DET)
+    detectRole: detectRole
   };
 })(window);

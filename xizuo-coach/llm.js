@@ -762,7 +762,7 @@ function run(opts) {
     loadConfig: loadConfig, saveConfig: saveConfig, clearKey: clearKey,
     isReady: isReady, statusText: statusText, isRelative: isRelative,
     isVisionReady: isVisionReady, visionStatusText: visionStatusText,
-    channel: channel, hasChannel: hasChannel, channelLabel: channelLabel, visionModelInUse: visionModelInUse,
+    channel: channel, hasChannel: hasChannel, channelLabel: channelLabel,
     OCR_SYS: OCR_SYS, buildOcrMessages: buildOcrMessages, cleanOcr: cleanOcr, ocrImage: ocrImage,
     buildMessages: buildMessages, generateText: generateText, testConnection: testConnection,
     matchQuote: matchQuote, stripDemo: stripDemo,
