@@ -35,8 +35,29 @@ ok(s.w >= 1 && s.h >= 1, '异常尺寸不会产生 0 宽高画布');
 s = IMG.scaleSize(3000, 2000, 1600);
 ok(Math.max(s.w, s.h) === 1600 && Math.abs(s.w / s.h - 1.5) < 0.01, '保持原始宽高比');
 
-/* ---------- 2. 文件判定 ---------- */
-console.log('\n[2] 文件类型与 HEIC 判定');
+/* ---------- 2. 对比拉伸 ---------- */
+console.log('\n[2] 灰度与对比拉伸');
+function px(pairs) { const a = []; pairs.forEach(([r, g, b]) => a.push(r, g, b, 255)); return a; }
+/* 偏暗低对比:灰度集中在 105~135 */
+let arr = px([[105, 105, 105], [110, 110, 110], [120, 120, 120], [125, 125, 125], [130, 130, 130], [135, 135, 135]]);
+let r2 = IMG.stretchLuma(arr);
+ok(r2.stretched === true, '低对比图像触发拉伸,实际 lo/hi=' + r2.lo + '/' + r2.hi);
+ok(arr[0] < 20 && arr[5 * 4] > 235, '暗部压到 0、亮部拉到 255(实际 ' + arr[0] + ' / ' + arr[5 * 4] + ')');
+ok(arr[0] === arr[1] && arr[1] === arr[2], '拉伸后为灰度(三通道相等,去掉了色偏)');
+/* 已经拉满对比:本就无需拉伸 */
+arr = px([[0, 0, 0], [255, 255, 255], [128, 128, 128], [10, 10, 10], [250, 250, 250]]);
+r2 = IMG.stretchLuma(arr);
+ok(r2.stretched === false, '对比度已足够时不做拉伸(避免放大噪点)');
+ok(arr[0] === 0 && arr[4] === 255 && arr[8] === 128, '原值保持不变');
+/* 基本全黑(拍糊/没开灯):区间太小,不拉伸 */
+arr = px([[10, 10, 10], [12, 12, 12], [11, 11, 11]]);
+r2 = IMG.stretchLuma(arr);
+ok(r2.stretched === false, '极低对比时拒绝拉伸,不会把噪点拉成花纹');
+ok(arr[0] === 10, '灰度值原样保留');
+ok(IMG.stretchLuma([]).stretched === false, '空数组不会崩');
+
+/* ---------- 3. 文件判定 ---------- */
+console.log('\n[3] 文件类型与 HEIC 判定');
 ok(IMG.isImageFile({ type: 'image/jpeg', name: 'a.jpg' }) === true, '按 MIME 识别图片');
 ok(IMG.isImageFile({ type: '', name: 'a.PNG' }) === true, 'MIME 为空时按扩展名兜底');
 ok(IMG.isImageFile({ type: 'text/plain', name: 'a.txt' }) === false, '文本文件被拒');
@@ -44,8 +65,8 @@ ok(IMG.isImageFile(null) === false, '空值被拒');
 ok(IMG.isHeic({ type: 'image/heic', name: 'IMG_0001.HEIC' }) === true, '识别 HEIC');
 ok(IMG.isHeic({ type: 'image/jpeg', name: 'a.jpg' }) === false, '普通 jpg 不会被误判');
 
-/* ---------- 3. 转录纪律 ---------- */
-console.log('\n[3] 转录提示词的纪律');
+/* ---------- 4. 转录纪律 ---------- */
+console.log('\n[4] 转录提示词的纪律');
 const SYS = LLM.OCR_SYS;
 ok(has(SYS, '只做文字转录的机器'), '声明身份是转录机器,不是助手');
 ok(has(SYS, '错别字') && has(SYS, '病句'), '要求错别字与病句照抄,不许改');
@@ -63,8 +84,8 @@ ok(msgs[1].content[1].type === 'image_url' && msgs[1].content[1].image_url.url =
 ok(has(msgs[1].content[0].text, '第 2 页') && has(msgs[1].content[0].text, '共 3 页'), '告知分页位置');
 ok(has(msgs[1].content[0].text, '不要补写'), '明确禁止跨页补写或总结');
 
-/* ---------- 4. 输出清理 ---------- */
-console.log('\n[4] 识别结果清理');
+/* ---------- 5. 输出清理 ---------- */
+console.log('\n[5] 识别结果清理');
 let c = LLM.cleanOcr('我家养了一只猫。它的毛是黑白相间的,很漂亮。');
 ok(c.text === '我家养了一只猫。它的毛是黑白相间的,很漂亮。' && !c.unreadable, '干净输出原样通过');
 
@@ -96,8 +117,8 @@ ok(c.text.indexOf('#') === -1, '去掉行首 Markdown 标题记号');
 c = LLM.cleanOcr('短句');
 ok(c.chars === 2 && c.notes.some(n => has(n, '字数很少')), '字数过少时给出重点核对提示');
 
-/* ---------- 5. 识图配置 ---------- */
-console.log('\n[5] 识图配置与就绪判断');
+/* ---------- 6. 识图配置 ---------- */
+console.log('\n[6] 识图配置与就绪判断');
 const pDeep = LLM.preset('deepseek');
 ok(!pDeep.vision, 'DeepSeek 预设不含视觉模型(它目前没有)');
 ok(!!LLM.preset('dashscope').vision && !!LLM.preset('zhipu').vision && !!LLM.preset('siliconflow').vision, '通义/智谱/硅基流动预设带出各自视觉模型名');
@@ -113,7 +134,7 @@ ok(LLM.isVisionReady(cfg) === true, '填好视觉模型名后识图就绪');
 ok(has(LLM.visionStatusText(cfg).text, 'qwen-vl-max'), '状态行显示所用视觉模型');
 ok(JSON.parse(sandbox.localStorage.getItem('xz_llm_cfg')).visionModel === 'qwen-vl-max', '视觉模型名随配置持久化');
 
-/* ---------- 6. 接口调用 ---------- */
+/* ---------- 7. 接口调用 ---------- */
 function mockSse(text, chunkSize) {
   const enc = new TextEncoder();
   const frames = (String(text).match(new RegExp('[\\s\\S]{1,' + (chunkSize || 24) + '}', 'g')) || ['']).map(t => 'data: ' + JSON.stringify({ choices: [{ delta: { content: t } }] }) + '\n\n');
