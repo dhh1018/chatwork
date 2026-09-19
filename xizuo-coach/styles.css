@@ -34,25 +34,16 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+html { height: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-header.top {
-  padding: 22px 20px 14px;
-  max-width: 1240px;
-  margin: 0 auto;
-}
-header.top h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: .3px; }
-header.top p { margin: 6px 0 0; color: var(--text-2); font-size: 13px; }
 
-main {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 0 20px 60px;
-}
+/* 页头/主容器的宽度轴与页面骨架统一在对话区那段定义(见文末「对话式形态」),
+   此处只保留通用外观。 */
 
 .panel {
   background: var(--surface);
@@ -407,31 +398,43 @@ button.ghost.sm { padding: 4px 9px; font-size: 12px; }
  * 沿用上面的样式,只是换了容器。
  * ========================================================== */
 
-/* 页头只有一块牌子:不放任何按钮,所有操作都在下面的对话里 */
-header.top {
+/* 页头只有一块牌子:不放任何按钮,所有操作都在下面的对话里。
+   页头与对话面板共用同一条宽度轴(--shell),两者左右边线永远对齐。 */
+:root { --shell: 820px; }
+
+body {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  max-width: 920px;
-  padding: 18px 20px 10px;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
 }
-header.top h1 { font-size: 17px; }
+header.top {
+  flex: none;
+  width: 100%;
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: 20px 16px 12px;
+}
 header.top .brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
-header.top .tagline { color: var(--text-3); font-size: 12px; }
+header.top h1 { font-size: 18px; margin: 0; }
+header.top .tagline { color: var(--text-3); font-size: 12.5px; }
 
 main.chatwrap {
-  display: block;
-  max-width: 920px;
-  padding: 0 20px 16px;
+  flex: 1 1 auto;
+  display: flex;
+  width: 100%;
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: 0 16px 16px;
+  min-height: 0;
 }
 .chat-panel {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   padding: 0;
   overflow: hidden;
-  height: calc(100vh - 172px);
-  min-height: 460px;
-  max-height: 880px;
+  min-height: 0;
 }
 
 /* ---------- 消息列表 ---------- */
@@ -439,8 +442,14 @@ main.chatwrap {
   flex: 1 1 auto;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 20px 18px 8px;
+  padding: 22px 20px 10px;
+  margin: 0;
   scroll-behavior: smooth;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  min-height: 0;
 }
 .msglist::-webkit-scrollbar { width: 10px; }
 .msglist::-webkit-scrollbar-track { background: transparent; }
@@ -450,18 +459,19 @@ main.chatwrap {
 }
 .msglist::-webkit-scrollbar-thumb:hover { background: var(--text-3); background-clip: padding-box; }
 
-.msg { display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 16px; }
-.msg:last-child { margin-bottom: 4px; }
+.msg { display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 18px; }
+.msg:last-child { margin-bottom: 6px; }
 .msg.me { align-items: flex-end; }
 
 .bubble {
-  max-width: 88%;
+  max-width: 78%;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 11px 14px;
+  border-radius: 14px;
+  border-top-left-radius: 5px;
+  padding: 11px 15px;
   font-size: 14.5px;
-  line-height: 1.78;
+  line-height: 1.8;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -475,19 +485,21 @@ main.chatwrap {
 .msg.me .bubble {
   background: var(--brand);
   border-color: var(--brand);
+  border-radius: 14px;
+  border-top-right-radius: 5px;
   color: #fff;
 }
 .msg.me .bubble .dim { color: rgba(255, 255, 255, .78); }
 
 /* 小字提示:不占气泡,像系统附注 */
-.msg.k-note { margin-top: -8px; }
+.msg.k-note { margin-top: -10px; margin-bottom: 16px; }
 .msg.k-note .bubble {
   background: transparent;
   border: 0;
   padding: 0 4px;
-  max-width: 94%;
+  max-width: 88%;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.7;
 }
 
@@ -499,12 +511,14 @@ main.chatwrap {
 }
 
 /* 批改卡片:占满整行,内部沿用结果样式 */
-.msg.k-card { margin-bottom: 12px; }
+.msg.k-card { margin-bottom: 14px; }
 .bubble.card-bubble {
   max-width: 100%;
   width: 100%;
-  padding: 14px 16px;
+  padding: 18px 20px;
   background: var(--surface);
+  border-radius: 14px;
+  border-top-left-radius: 14px;
 }
 .card-bubble .card:last-child { margin-bottom: 0; }
 .card-bubble .sec:last-of-type { margin-bottom: 0; }
@@ -546,48 +560,79 @@ main.chatwrap {
 /* ---------- 底部输入区 ---------- */
 .composer {
   flex: none;
-  border-top: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 var(--radius) var(--radius);
   background: var(--surface);
-  padding: 12px 16px 10px;
+  padding: 12px 20px 14px;
+  box-shadow: 0 -1px 0 var(--line);
 }
 /* 输入条:一个 ＋ 图片、一个文本框、一个发送。图片不再是"面板",而是一条消息。 */
-.inputrow { display: flex; align-items: flex-end; gap: 9px; }
-.attach {
-  flex: none; width: 44px; height: 44px; padding: 0;
-  border: 1px solid var(--line-2); border-radius: 10px;
-  background: var(--surface-2); color: var(--text-2);
-  font-size: 22px; line-height: 1; font-family: inherit; cursor: pointer;
-  transition: color .15s, border-color .15s;
+.inputrow {
+  display: flex; align-items: flex-end; gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 6px 6px 6px 8px;
+  transition: border-color .15s;
 }
-.attach:hover { color: var(--brand); border-color: var(--brand); }
+.inputrow:focus-within { border-color: var(--brand); background: var(--surface); }
+.attach {
+  flex: none; width: 36px; height: 36px; padding: 0;
+  border: 0; border-radius: 9px;
+  background: transparent; color: var(--text-3);
+  font-size: 20px; line-height: 1; font-family: inherit; cursor: pointer;
+  transition: color .15s, background .15s;
+}
+.attach:hover { color: var(--brand); background: var(--brand-soft); }
 #input {
   flex: 1 1 auto;
   min-height: 0;
-  height: 44px;
-  max-height: 160px;
+  height: 36px;
+  max-height: 150px;
   resize: none;
-  padding: 11px 13px;
+  padding: 7px 6px;
   font-size: 14.5px;
   line-height: 1.6;
-  border-radius: 10px;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
 }
-#sendBtn { flex: none; padding: 11px 22px; font-size: 14px; border-radius: 10px; }
-.composer .ai-line { margin: 8px 0 0; }
+#input:focus { border: 0; background: transparent; }
+#sendBtn {
+  flex: none; padding: 8px 18px; font-size: 14px; border-radius: 9px;
+  align-self: flex-end;
+}
+.composer .ai-line { margin: 9px 0 0; }
 .ai-line-tip { color: var(--text-3); }
 
 @media (max-width: 640px) {
-  .chat-panel { height: calc(100vh - 174px); }
-  .bubble { max-width: 94%; }
-  .msg.me .bubble { max-width: 90%; }
-  .bubble.card-bubble { padding: 12px; }
+  :root { --shell: 100%; }
+  header.top { padding: 14px 12px 10px; }
+  header.top h1 { font-size: 16px; }
+  header.top .tagline { font-size: 11.5px; }
+  main.chatwrap { padding: 0 10px 10px; }
+  .msglist { padding: 16px 12px 8px; }
+  .bubble { max-width: 88%; }
+  .msg.me .bubble { max-width: 86%; }
+  .bubble.card-bubble { padding: 14px 13px; }
+  .composer { padding: 10px 12px 12px; }
   .imgcell img { width: 80px; height: 80px; }
 }
 
+@supports not (height: 100dvh) {
+  body { height: 100vh; }
+}
+
 @media print {
+  body { display: block; height: auto; overflow: visible; background: #fff; }
   .composer, .quick, .msg.k-note, .msg.k-img { display: none !important; }
-  main.chatwrap { padding: 0; max-width: none; }
-  .chat-panel { display: block; height: auto; min-height: 0; max-height: none; border: 0; padding: 0; overflow: visible; }
-  .msglist { overflow: visible; padding: 0; }
+  main.chatwrap { padding: 0; max-width: none; display: block; }
+  .chat-panel { display: block; min-height: 0; overflow: visible; }
+  .msglist {
+    overflow: visible; padding: 0; margin: 0;
+    border: 0; border-radius: 0; background: transparent;
+  }
   .msg, .msg.me { margin-bottom: 0; align-items: stretch; }
   .bubble, .bubble.card-bubble { max-width: 100%; width: 100%; border: 0; padding: 0; background: transparent; color: var(--text); }
   .msg.me .bubble { background: transparent; color: var(--text); }
