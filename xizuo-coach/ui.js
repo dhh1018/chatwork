@@ -1,16 +1,15 @@
 /* ============================================================
- * ui.js — 界面构件(与"对话"无关的那部分)
+ * ui.js — 界面构件(对话之外的那两件事)
  * ------------------------------------------------------------
- * 从表单版界面代码迁移而来,职责收窄为四件事:
- *   1) 习作图片的选取、压缩、逐页校对、识别编排
- *   2) 接口设置面板(平台通道状态 + 自带密钥覆盖)
- *   3) 批改结果卡片的结构化渲染(老师五段 / 学生提问)
- *   4) 复制 / 导出 Markdown / 打印
- * 对话本身由 chat.js 负责 —— 这里不认识"消息",只认识"卡片"。
+ *   1) 习作图片:压缩 + 逐页识别 —— 纯工具,不渲染任何面板。
+ *      图片长什么样、识别结果怎么校对,全部由 chat.js 放进对话消息里。
+ *   2) 接口设置弹层(密钥只能用密码框输入,所以留这一个弹层,
+ *      但入口也只出现在对话里)。
+ *   3) 批改结果卡片的结构化渲染 + 复制 / 导出 / 打印。
  *
  * 对外接口见文件末尾的 XZ_UI;两条回调由 chat.js 注入:
- *   hooks.toast(msg)                提示
- *   hooks.onAdoptText(text, mode)   校对结果采用到输入框(replace/append)
+ *   hooks.toast(msg)        提示
+ *   hooks.onFiles(files)    收到图片文件(选图 / 拖入 / 粘贴),交给对话去发
  * ============================================================ */
 (function (root) {
   'use strict';
@@ -26,11 +25,8 @@
 
   var hooks = {
     toast: function () { },
-    onAdoptText: function () { }
+    onFiles: function () { }
   };
-
-  /* 图片态:图片只是"来源",正文才是唯一权威 */
-  var IMG = { list: [], busy: false, ctrl: null, seq: 0 };
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -41,358 +37,128 @@
   function toast(m) { hooks.toast(m); }
 
   /* ============================================================
-   * 一、习作图片:选取 → 压缩 → 校对 → 采用
+   * 一、习作图片:压缩 → 逐页识别(结果交给对话渲染)
    * ========================================================== */
 
-  function itemById(id) {
-    for (var i = 0; i < IMG.list.length; i++) if (String(IMG.list[i].id) === String(id)) return IMG.list[i];
-    return null;
-  }
-  function itemIndex(item) { return IMG.list.indexOf(item); }
-  function charsOf(item) { return (item.text || '').replace(/[\s\u3000]/g, '').length; }
-
-  /** 计算"真正要送出去的那张图"(旋转与增强在导出时统一应用,保证所见即所发) */
-  function prepare(item) {
-    if (!item.src) return Promise.resolve(item);
-    if (!item.rot && !item.enh) { item.shown = item.src; return Promise.resolve(item); }
-    return XIMG.exportDataUrl(item).then(function (r) {
-      item.shown = r.url; item.outW = r.w; item.outH = r.h;
-      return item;
-    }, function () { item.shown = item.src; return item; });
+  function pickImages() {
+    var fi = $('fileInput');
+    if (fi) fi.click();
   }
 
-  function addFiles(files) {
+  /**
+   * 文件 → 压缩后的图片项。返回纯数据,不做任何界面动作。
+   * → { ok:[{name,src,w,h,origW,origH,scaled}], failed:[原因], skipped:数量 }
+   */
+  function compressFiles(files) {
+    var out = { ok: [], failed: [], skipped: 0 };
     var list = Array.prototype.slice.call(files || []);
-    if (!list.length) return;
-    var room = XIMG.MAX_PAGES - IMG.list.length;
-    if (room <= 0) { toast('单次最多 ' + XIMG.MAX_PAGES + ' 页,请先移除一些'); return; }
+    if (!list.length) return Promise.resolve(out);
 
-    var usable = [], skipped = 0;
-    list.forEach(function (f) { if (XIMG.isImageFile(f)) usable.push(f); else skipped++; });
-    if (usable.length > room) { skipped += usable.length - room; usable = usable.slice(0, room); }
-    if (!usable.length) { toast('没有可用的图片文件(支持 jpg / png / webp / 截图)'); return; }
+    var usable = [];
+    list.forEach(function (f) { if (XIMG.isImageFile(f)) usable.push(f); else out.skipped++; });
+    if (usable.length > XIMG.MAX_PAGES) {
+      out.skipped += usable.length - XIMG.MAX_PAGES;
+      usable = usable.slice(0, XIMG.MAX_PAGES);
+    }
+    if (!usable.length) return Promise.resolve(out);
 
-    if ($('imgCount')) $('imgCount').textContent = '处理中…';
-    var failed = [];
-    Promise.all(usable.map(function (f) {
+    return Promise.all(usable.map(function (f) {
       return XIMG.compress(f).then(function (r) {
         return {
-          id: ++IMG.seq, name: f.name || '图片', src: r.src, w: r.w, h: r.h,
-          origW: r.origW, origH: r.origH, scaled: !!r.scaled,
-          rot: 0, enh: false, status: 'idle', text: '', shown: '', err: '', notes: []
+          name: f.name || '图片', src: r.src, w: r.w, h: r.h,
+          origW: r.origW, origH: r.origH, scaled: !!r.scaled
         };
       }, function (e) {
-        failed.push((e && e.message) || String(e));
+        out.failed.push((e && e.message) || String(e));
         return null;
       });
     })).then(function (items) {
-      items.forEach(function (it) { if (it) IMG.list.push(it); });
-      var ok = items.filter(Boolean).length;
-      if (failed.length) toast(failed.length + ' 张读取失败:' + failed[0].slice(0, 46));
-      else if (ok) toast('已添加 ' + ok + ' 张图片' + (ok > 1 ? ',请确认页序正确' : ''));
-      if (skipped) toast(skipped + ' 个文件被跳过' + (failed[0] ? '。' + failed[0] : ''));
-      if (!ok) return;
-      renderThumbs();
-      openOcr();
+      items.forEach(function (it) { if (it) out.ok.push(it); });
+      return out;
     });
   }
 
-  function renderThumbs() {
-    var box = $('thumbs'), acts = $('imgActions');
-    if (!box || !acts) return;
-    if (!IMG.list.length) {
-      box.hidden = true; box.innerHTML = '';
-      acts.hidden = true;
-      if ($('imgCount')) $('imgCount').textContent = '未添加';
-      renderImgHint();
-      return;
-    }
-    box.hidden = false; acts.hidden = false;
-    if ($('imgCount')) $('imgCount').textContent = IMG.list.length + ' 页';
-    box.innerHTML = IMG.list.map(function (it, i) {
-      var st = it.status;
-      var label = st === 'ok' ? charsOf(it) + ' 字' : st === 'run' ? '识别中' : st === 'fail' ? '失败' : '待识别';
-      var cls = st === 'ok' ? 'ok' : st === 'fail' ? 'bad' : st === 'run' ? 'run' : '';
-      var img = it.shown || it.src;
-      return '<div class="thumb" data-id="' + it.id + '">' +
-        '<div class="thumb-img" data-act="open" title="点击打开校对面板">' +
-        (img ? '<img src="' + esc(img) + '" alt="第 ' + (i + 1) + ' 页">' : '<div class="thumb-bad">!</div>') +
-        '<span class="thumb-no">' + (i + 1) + '</span>' +
-        '</div>' +
-        '<div class="thumb-st ' + cls + '">' + esc(label) + '</div>' +
-        '<button type="button" class="thumb-del" data-act="del" aria-label="移除第 ' + (i + 1) + ' 页">×</button>' +
-        '</div>';
-    }).join('');
-    renderImgHint();
-  }
+  /**
+   * 逐页识别。items: [{src}]（按页序）
+   * opts: { signal, onPage(i, total), onDelta(d, i) }
+   * → { pages:[{text,err,unreadable,notes}], ok, fail, aborted }
+   * 一页失败不影响其他页;识别只负责"把字变成文字",不参与任何评价。
+   */
+  function ocrPages(items, opts) {
+    opts = opts || {};
+    var pages = (items || []).map(function () {
+      return { text: '', err: '', unreadable: false, notes: [] };
+    });
+    var ok = 0, fail = 0;
+    var chain = Promise.resolve();
 
-  function renderImgHint() {
-    var h = $('imgHint');
-    if (!h) return;
-    if (!IMG.list.length) { h.textContent = ''; return; }
-    var vs = LLM ? LLM.visionStatusText() : { on: false, text: '' };
-    h.textContent = vs.on
-      ? '识别结果必须对照图片校对一遍再发出去 —— 识别错了,批改就跟着批错。'
-      : '当前没有可用的识图通道,可打开校对面板对着图片把文字录入。';
-  }
-
-  function openOcr() {
-    if (!IMG.list.length) { toast('先添加习作图片'); return; }
-    renderOcr();
-    var m = $('ocrModal'); if (m) m.hidden = false;
-  }
-  function closeOcr() { var m = $('ocrModal'); if (m) m.hidden = true; }
-  function renderOcr() { renderOcrBar(); renderOcrBody(); renderOcrSum(); }
-
-  function renderOcrBar() {
-    var bar = $('ocrBar'); if (!bar) return;
-    var vs = LLM ? LLM.visionStatusText() : { on: false, text: '接口层未加载' };
-    var html = '<span class="dot ' + (vs.on ? 'on' : 'off') + '"></span><span class="ocr-status">' + esc(vs.text) + '</span>';
-    html += '<span class="grow"></span>';
-    if (IMG.busy) {
-      html += '<button type="button" class="ghost sm" data-act="stop">停止识别</button>';
-    } else if (vs.on) {
-      var undone = IMG.list.filter(function (i) { return i.src && i.status !== 'ok'; }).length;
-      var done = IMG.list.filter(function (i) { return i.status === 'ok'; }).length;
-      html += '<button type="button" class="ghost sm" data-act="runall">' +
-        (done && undone ? '识别未完成的 ' + undone + ' 页' : '识别全部页面') + '</button>';
-    } else {
-      html += '<button type="button" class="linkbtn" data-act="setting">去看识图设置</button>';
-    }
-    bar.innerHTML = html;
-  }
-
-  function renderOcrBody() {
-    var body = $('ocrBody'); if (!body) return;
-    body.innerHTML = IMG.list.map(function (it, i) {
-      var st = it.status;
-      var stTxt = st === 'ok' ? '已识别 · ' + charsOf(it) + ' 字' : st === 'run' ? '识别中…' : st === 'fail' ? '识别失败' : '尚未识别';
-      var img = it.shown || it.src;
-      return '<div class="ocr-page" data-id="' + it.id + '">' +
-        '<div class="ocr-tools">' +
-        '<span class="pgno">第 ' + (i + 1) + ' 页</span>' +
-        '<span class="ocr-st ' + st + '">' + esc(stTxt) + '</span>' +
-        '<span class="grow"></span>' +
-        '<button type="button" class="ghost sm" data-act="rot" title="每点一次向左转 90°">旋转</button>' +
-        '<button type="button" class="ghost sm' + (it.enh ? ' on' : '') + '" data-act="enh" title="灰度化并拉伸对比度,拍暗了的照片会清楚很多">' + (it.enh ? '已增强' : '增强') + '</button>' +
-        '<button type="button" class="ghost sm" data-act="page">识本页</button>' +
-        '<button type="button" class="ghost sm" data-act="up"' + (i === 0 ? ' disabled' : '') + '>前移</button>' +
-        '<button type="button" class="ghost sm" data-act="down"' + (i === IMG.list.length - 1 ? ' disabled' : '') + '>后移</button>' +
-        '<button type="button" class="ghost sm" data-act="del">移除</button>' +
-        '</div>' +
-        '<div class="ocr-pair">' +
-        '<div class="ocr-imgwrap">' +
-        (img
-          ? '<img src="' + esc(img) + '" data-act="zoom" alt="第 ' + (i + 1) + ' 页习作图片">'
-          : '<div class="ocr-imgbad">' + esc(it.err || '图片读取失败') + '</div>') +
-        (it.scaled ? '<div class="ocr-imgmeta">原图 ' + it.origW + '×' + it.origH + ' → 已压缩为 ' + it.w + '×' + it.h + '</div>' : '') +
-        '</div>' +
-        '<div class="ocr-textwrap">' +
-        '<textarea class="ocr-text" data-act="text" placeholder="识别结果会出现在这里。没有识图通道时,请对着左边的照片把文字打进来 —— 错别字、病句、标点都照原样,不要顺手改对。">' + esc(it.text || '') + '</textarea>' +
-        (it.err ? '<div class="ocr-err">' + esc(it.err) + '</div>' : '') +
-        (it.notes && it.notes.length ? '<div class="ocr-note">' + esc(it.notes.join(';')) + '</div>' : '') +
-        '</div>' +
-        '</div>' +
-        '</div>';
-    }).join('');
-  }
-
-  function renderOcrSum() {
-    if (!$('ocrSum')) return;
-    var completed = IMG.list.filter(function (i) { return i.status === 'ok'; }).length;
-    var total = mergedOcrText(false).replace(/[\s\u3000]/g, '').length;
-    $('ocrSum').innerHTML = '共 <b>' + IMG.list.length + '</b> 页 · 已识别 <b>' + completed + '</b> 页 · 合起来 <b>' + total + '</b> 字';
-    $('ocrApply').disabled = !total;
-  }
-
-  /** 按当前页序拼合各页文字;forApply 时遵守"页间分段"开关 */
-  function mergedOcrText(forApply) {
-    var sep = '\n\n';
-    if (forApply) {
-      var cb = $('ocrPara');
-      if (cb && !cb.checked) sep = '\n';
-    }
-    return IMG.list.map(function (i) {
-      return String(i.text || '').replace(/^\s+|\s+$/g, '');
-    }).filter(Boolean).join(sep);
-  }
-
-  function runOcr(targets) {
-    if (IMG.busy) return;
-    if (!LLM || !LLM.isVisionReady()) {
-      toast('先接通识图通道(平台通道自带,或在设置里填视觉模型)');
-      openSettings();
-      return;
-    }
-    var todo;
-    if (targets && targets.length) {
-      todo = targets.filter(function (i) { return i.src; });
-    } else {
-      todo = IMG.list.filter(function (i) { return i.src && i.status !== 'ok'; });
-      if (!todo.length) { toast('所有页面都已识别。要重识某一页,点该页的「识本页」'); return; }
-    }
-    if (!todo.length) { toast('没有可识别的图片'); return; }
-
-    var ctrl = new AbortController();
-    IMG.ctrl = ctrl;
-    IMG.busy = true;
-    renderOcrBar(); renderOcrBody(); renderOcrSum();
-
-    var i = 0, okN = 0, failN = 0;
-
-    function step() {
-      if (ctrl.signal.aborted || i >= todo.length) return Promise.resolve();
-      var item = todo[i++];
-      item.status = 'run'; item.err = ''; item.notes = []; item.buf = '';
-      renderOcrBar(); renderThumbs(); renderOcrBody();
-      var ta = $('ocrBody').querySelector('.ocr-page[data-id="' + item.id + '"] textarea');
-      if (ta) ta.value = '';
-
-      return XIMG.exportDataUrl(item).then(function (r) {
-        item.shown = r.url;
-        return LLM.ocrImage({
-          imageUrl: r.url,
-          index: itemIndex(item) + 1,
-          total: IMG.list.length,
-          signal: ctrl.signal,
-          onDelta: function (d) {
-            item.buf += d;
-            var box = $('ocrBody').querySelector('.ocr-page[data-id="' + item.id + '"] textarea');
-            if (box) { box.value = item.buf; box.scrollTop = box.scrollHeight; }
+    pages.forEach(function (piece, i) {
+      chain = chain.then(function () {
+        if (opts.signal && opts.signal.aborted) return;
+        if (opts.onPage) opts.onPage(i, pages.length);
+        return XIMG.exportDataUrl(items[i]).then(function (r) {
+          return LLM.ocrImage({
+            imageUrl: r.url,
+            index: i + 1,
+            total: pages.length,
+            signal: opts.signal,
+            onDelta: function (d) {
+              piece.text += d;
+              if (opts.onDelta) opts.onDelta(d, i);
+            }
+          });
+        }).then(function (r) {
+          if (opts.signal && opts.signal.aborted) { piece.text = ''; return; }
+          if (r && r.unreadable) {
+            piece.unreadable = true; piece.text = '';
+            piece.err = '这一页没有读出作文文字 —— 可能是拍得偏暗、发糊,或者画面里没有字。重拍一张再发我也可以。';
+            fail++;
+          } else {
+            piece.text = (r && r.text) || '';
+            piece.notes = (r && r.notes) || [];
+            if (piece.text) ok++; else { piece.err = '这一页没有读到文字。'; fail++; }
           }
+        }, function (e) {
+          if (opts.signal && opts.signal.aborted) { piece.text = ''; return; }
+          piece.err = (e && e.message) || String(e);
+          fail++;
         });
-      }).then(function (r) {
-        if (ctrl.signal.aborted) { item.status = 'idle'; item.text = ''; return; }
-        if (r.unreadable) {
-          item.status = 'fail'; item.text = '';
-          item.err = '这张图里没有读出作文文字(画面可能过暗、过糊,或拍的不是作文)。可重拍后点「识本页」重试,或直接在右侧手工录入。';
-          failN++;
-        } else {
-          item.status = 'ok'; item.text = r.text; item.notes = r.notes || [];
-          okN++;
-        }
-      }, function (e) {
-        if (ctrl.signal.aborted) { item.status = 'idle'; item.text = ''; return; }
-        item.status = 'fail'; item.notes = [];
-        item.err = ((e && e.message) || String(e)) + ' 可点「识本页」重试。';
-        failN++;
-      }).then(function () {
-        item.buf = '';
-        renderOcrBody();
-        return step();
       });
-    }
+    });
 
-    return step().then(function () {
-      IMG.busy = false;
-      IMG.ctrl = null;
-      renderOcrBar(); renderOcrBody(); renderOcrSum(); renderThumbs();
-      if (ctrl.signal.aborted) { toast('已停止识别'); return; }
-      if (!failN) toast('识别完成:' + okN + ' 页,请逐页对照图片校对');
-      else toast('识别完成:' + okN + ' 页成功,' + failN + ' 页失败可重试');
+    return chain.then(function () {
+      return { pages: pages, ok: ok, fail: fail, aborted: !!(opts.signal && opts.signal.aborted) };
     });
   }
 
-  function stopOcr() { if (IMG.ctrl) { try { IMG.ctrl.abort(); } catch (e) { } } }
-
-  function updatePageVisual(item) {
-    var page = $('ocrBody').querySelector('.ocr-page[data-id="' + item.id + '"]');
-    if (page) {
-      var img = page.querySelector('img');
-      if (img) img.src = item.shown || item.src;
-      var enh = page.querySelector('button[data-act="enh"]');
-      if (enh) { enh.textContent = item.enh ? '已增强' : '增强'; enh.classList.toggle('on', !!item.enh); }
-    }
-    var th = $('thumbs').querySelector('.thumb[data-id="' + item.id + '"] img');
-    if (th) th.src = item.shown || item.src;
-  }
-
-  function moveItem(item, dir) {
-    var i = itemIndex(item), j = i + dir;
-    if (i < 0 || j < 0 || j >= IMG.list.length) return;
-    IMG.list[i] = IMG.list[j];
-    IMG.list[j] = item;
-    var sc = $('ocrBody').scrollTop;
-    renderOcrBody(); renderThumbs(); renderOcrSum();
-    $('ocrBody').scrollTop = sc;
-    toast('已' + (dir < 0 ? '前移' : '后移') + ',当前第 ' + (j + 1) + ' 页');
-  }
-
-  function removeItem(item) {
-    var i = itemIndex(item);
-    if (i < 0) return;
-    IMG.list.splice(i, 1);
-    renderThumbs(); renderOcrSum();
-    if (!IMG.list.length) { closeOcr(); toast('图片已清空'); return; }
-    var sc = $('ocrBody').scrollTop;
-    renderOcrBody(); renderOcrBar();
-    $('ocrBody').scrollTop = sc;
-  }
-
-  function openZoom(item) {
-    var src = item.shown || item.src;
-    if (!src) return;
-    $('zoomImg').src = src;
+  function openZoom(url) {
+    if (!url || !$('zoomImg')) return;
+    $('zoomImg').src = url;
     $('zoomBox').hidden = false;
   }
 
-  /** 采用:交给 chat.js 填进输入框,由使用者确认后自己发送 ——
-   *  识别结果绝不自动当成正文发出去。 */
-  function applyOcr() {
-    var text = mergedOcrText(true);
-    if (!text) { toast('还没有可用文字:先识别,或对着图片录入'); return; }
-    var mode = (document.querySelector('input[name=ocrMode]:checked') || {}).value || 'replace';
-    closeOcr();
-    hooks.onAdoptText(text, mode);
-    toast('已放入输入框 ' + text.replace(/[\s\u3000]/g, '').length + ' 字,核对无误后发送');
-  }
-
-  function clearImages() {
-    stopOcr();
-    IMG.list = [];
-    renderThumbs();
-    closeOcr();
-    toast('图片已清空');
-  }
-
-  function initImages() {
-    if (!XIMG) return;
-    var pick = $('pickBtn'), shot = $('shotBtn'), dz = $('dropZone');
-    if (pick) pick.addEventListener('click', function (e) { e.stopPropagation(); $('fileInput').click(); });
-    if (shot) shot.addEventListener('click', function (e) { e.stopPropagation(); $('camInput').click(); });
-    if (dz) dz.addEventListener('click', function (e) {
-      if (e.target.closest('button')) return;
-      $('fileInput').click();
-    });
-    ['fileInput', 'camInput'].forEach(function (id) {
-      var el = $(id);
-      if (!el) return;
-      el.addEventListener('change', function () {
-        if (this.files && this.files.length) addFiles(this.files);
+  /** 图片入口:只说两件事 —— 选到文件了、拖进来或粘贴了。怎么用由对话决定。 */
+  function initAttach() {
+    var btn = $('imgBtn'), fi = $('fileInput');
+    if (btn) btn.addEventListener('click', pickImages);
+    if (fi) {
+      fi.addEventListener('change', function () {
+        if (this.files && this.files.length) hooks.onFiles(this.files);
         this.value = '';
       });
+    }
+
+    document.addEventListener('dragover', function (e) { e.preventDefault(); });
+    document.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var dt = e.dataTransfer;
+      if (dt && dt.files && dt.files.length) hooks.onFiles(dt.files);
     });
 
-    if (dz) {
-      ['dragenter', 'dragover'].forEach(function (ev) {
-        dz.addEventListener(ev, function (e) { e.preventDefault(); this.classList.add('on'); });
-      });
-      ['dragleave', 'drop'].forEach(function (ev) {
-        dz.addEventListener(ev, function (e) { e.preventDefault(); this.classList.remove('on'); });
-      });
-      dz.addEventListener('drop', function (e) {
-        if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
-      });
-    }
-    document.addEventListener('dragover', function (e) { e.preventDefault(); });
-    document.addEventListener('drop', function (e) { e.preventDefault(); });
-
-    /* 粘贴截图:粘贴到输入框里仍按文字处理,不抢 */
+    /* 截图后直接粘贴。输入框里粘的是"带文字的富文本"时不抢,按文字处理。 */
     document.addEventListener('paste', function (e) {
       var cb = e.clipboardData;
       if (!cb) return;
-      var t = e.target;
-      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
       var files = [];
       Array.prototype.forEach.call(cb.files || [], function (f) { if (XIMG.isImageFile(f)) files.push(f); });
       if (!files.length && cb.items) {
@@ -401,76 +167,15 @@
         });
       }
       if (!files.length) return;
+      var t = e.target;
+      var inField = t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT');
+      var plain = cb.getData ? (cb.getData('text/plain') || '') : '';
+      if (inField && plain.replace(/\s/g, '')) return;
       e.preventDefault();
-      addFiles(files);
+      hooks.onFiles(files);
     });
-
-    var thumbs = $('thumbs');
-    if (thumbs) thumbs.addEventListener('click', function (e) {
-      var box = e.target.closest('.thumb');
-      if (!box) return;
-      var item = itemById(box.getAttribute('data-id'));
-      if (!item) return;
-      if (e.target.closest('button[data-act="del"]')) { removeItem(item); return; }
-      openOcr();
-    });
-
-    var ocrBtnEl = $('ocrBtn'), imgClearEl = $('imgClear'), ocrCloseEl = $('ocrClose'), ocrModalEl = $('ocrModal');
-    if (ocrBtnEl) ocrBtnEl.addEventListener('click', openOcr);
-    if (imgClearEl) imgClearEl.addEventListener('click', clearImages);
-    if (ocrCloseEl) ocrCloseEl.addEventListener('click', closeOcr);
-    if (ocrModalEl) ocrModalEl.addEventListener('click', function (e) { if (e.target === this) closeOcr(); });
-    if ($('ocrApply')) $('ocrApply').addEventListener('click', applyOcr);
-    if ($('ocrPara')) $('ocrPara').addEventListener('change', renderOcrSum);
-    if ($('ocrBar')) $('ocrBar').addEventListener('click', function (e) {
-      var b = e.target.closest('button[data-act]');
-      if (!b) return;
-      var act = b.getAttribute('data-act');
-      if (act === 'runall') runOcr(null);
-      else if (act === 'stop') stopOcr();
-      else if (act === 'setting') openSettings();
-    });
-
-    if ($('ocrBody')) {
-      $('ocrBody').addEventListener('input', function (e) {
-        var ta = e.target.closest('textarea[data-act="text"]');
-        if (!ta) return;
-        var page = ta.closest('.ocr-page');
-        if (!page) return;
-        var item = itemById(page.getAttribute('data-id'));
-        if (!item) return;
-        item.text = ta.value;
-        if (item.status !== 'ok' && ta.value.trim()) { item.status = 'ok'; item.err = ''; }
-        var st = page.querySelector('.ocr-st');
-        if (st) st.textContent = '已录入 · ' + charsOf(item) + ' 字';
-        renderOcrSum();
-        renderThumbs();
-      });
-
-      $('ocrBody').addEventListener('click', function (e) {
-        var page = e.target.closest('.ocr-page');
-        if (!page) return;
-        var item = itemById(page.getAttribute('data-id'));
-        if (!item) return;
-        if (e.target.closest('img[data-act="zoom"]')) { openZoom(item); return; }
-        var b = e.target.closest('button[data-act]');
-        if (!b) return;
-        var act = b.getAttribute('data-act');
-        if (act === 'rot') {
-          item.rot = (item.rot + 270) % 360;
-          prepare(item).then(function () { updatePageVisual(item); });
-        } else if (act === 'enh') {
-          item.enh = !item.enh;
-          prepare(item).then(function () { updatePageVisual(item); });
-        } else if (act === 'up') moveItem(item, -1);
-        else if (act === 'down') moveItem(item, 1);
-        else if (act === 'del') removeItem(item);
-        else if (act === 'page') runOcr([item]);
-      });
-    }
 
     if ($('zoomBox')) $('zoomBox').addEventListener('click', function () { this.hidden = true; });
-    renderThumbs();
   }
 
   /* ============================================================
@@ -487,14 +192,12 @@
     }).join('');
   }
 
-  /** 通道状态行:一行说清"现在到底谁在说话" */
+  /** 通道状态行:一行说清"现在到底谁在说话"。它只说状态,不是操作入口。 */
   function renderChannelLine(el) {
     if (!el) return;
     var st = LLM ? LLM.statusText() : { on: false, text: '接口层未加载' };
     el.innerHTML = '<span class="dot ' + (st.on ? 'on' : 'off') + '"></span><span class="ai-line-text">' + esc(st.text) + '</span>' +
-      '<button type="button" class="linkbtn" data-act="setting">设置</button>';
-    var b = el.querySelector('[data-act="setting"]');
-    if (b) b.addEventListener('click', openSettings);
+      (st.on ? '' : '<span class="ai-line-tip">对我说一句「设置」就能接通大模型</span>');
   }
 
   function openSettings() {
@@ -572,9 +275,8 @@
       if (c.enabled && (!c.baseUrl || !c.model)) { $('aiMsg').textContent = '启用前请填写接口地址与模型名'; $('aiMsg').className = 'ai-msg bad'; return; }
       if (c.enabled && !LLM.isRelative(c.baseUrl) && !c.apiKey) { $('aiMsg').textContent = '启用前请填写 API Key(或改填自建代理地址)'; $('aiMsg').className = 'ai-msg bad'; return; }
       LLM.saveConfig(c);
-      /* 通道变了,输入区那行状态与图片提示都要跟着变,否则用户看到的是旧结论 */
+      /* 通道变了,输入区那行状态要跟着变,否则用户看到的是旧结论 */
       renderChannelLine($('aiLine'));
-      renderImgHint();
       $('aiMsg').textContent = c.enabled ? '已保存,自有通道优先于平台通道' : '已保存(使用平台通道)';
       $('aiMsg').className = 'ai-msg ok';
       toast('接口设置已保存');
@@ -619,14 +321,12 @@
       LLM.clearKey();
       $('aiKey').value = '';
       renderChannelLine($('aiLine'));
-      renderImgHint();
       $('aiMsg').textContent = '已从本机清除密钥'; $('aiMsg').className = 'ai-msg ok';
     });
 
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape') return;
       if ($('setModal') && !$('setModal').hidden) closeSettings();
-      else if ($('ocrModal') && !$('ocrModal').hidden) closeOcr();
     });
   }
 
@@ -886,18 +586,19 @@
   function init(opts) {
     opts = opts || {};
     if (opts.toast) hooks.toast = opts.toast;
-    if (opts.onAdoptText) hooks.onAdoptText = opts.onAdoptText;
+    if (opts.onFiles) hooks.onFiles = opts.onFiles;
     initSettings();
-    initImages();
+    initAttach();
   }
 
   global.XZ_UI = {
     init: init,
+    pickImages: pickImages,
+    compressFiles: compressFiles,
+    ocrPages: ocrPages,
+    openZoom: openZoom,
     renderChannelLine: renderChannelLine,
     openSettings: openSettings, closeSettings: closeSettings,
-    openOcr: openOcr, closeOcr: closeOcr,
-    imageCount: function () { return IMG.list.length; },
-    clearImages: clearImages,
     reportHtml: reportHtml,
     toMarkdown: toMarkdown,
     bindToolbar: bindToolbar,

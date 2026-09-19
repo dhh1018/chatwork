@@ -4,19 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>习作批改助手 · 对话式批改机器人</title>
-<meta name="description" content="对话式作文批改机器人:先告诉它你是老师还是学生,再把习作发给它,它会对照统编版五年级单元训练点给出批改意见。老师得到结构化批改报告,学生得到提问引导,绝不代写。">
+<meta name="description" content="对话式作文批改机器人:先告诉它你是老师还是学生,再把习作发给它(文字或照片),它会对照统编版五年级单元训练点给出批改意见。老师得到结构化批改报告,学生得到提问引导,绝不代写。">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
+<!-- 页面只做一件事:把对话框放在中间。所有操作——认身份、收习作、
+     选单元、发照片、确认识别结果、改设置——都在对话里完成。 -->
 <header class="top">
   <div class="brand">
     <h1>习作批改助手</h1>
-    <p>统编版五年级 · 16 个习作单元 · 对话式批改</p>
-  </div>
-  <div class="chips">
-    <button type="button" class="chipbtn" id="roleChip" title="切换身份">身份:未选择</button>
-    <button type="button" class="chipbtn" id="unitChip" title="重新选择习作单元">单元:未选择</button>
+    <span class="tagline">统编版五年级 · 16 个习作单元 · 对话式批改</span>
   </div>
 </header>
 
@@ -25,24 +23,10 @@
     <div class="msglist" id="msgList"></div>
 
     <div class="composer">
-      <div class="dropzone mini" id="dropZone" title="也可以把照片拖到这里">
-        <input type="file" id="fileInput" accept="image/*" multiple hidden>
-        <input type="file" id="camInput" accept="image/*" capture="environment" hidden>
-        <button type="button" class="ghost sm" id="pickBtn">图片</button>
-        <button type="button" class="ghost sm" id="shotBtn">拍照</button>
-        <span class="dz-tip">手写习作可以拍照片发我 —— 也可以拖进来或直接粘贴截图</span>
-        <span class="count" id="imgCount">未添加</span>
-      </div>
-
-      <div class="thumbs" id="thumbs" hidden></div>
-      <div class="img-actions" id="imgActions" hidden>
-        <button type="button" id="ocrBtn" class="primary sm">识别图片文字</button>
-        <button type="button" id="imgClear" class="ghost sm">清空图片</button>
-      </div>
-      <p class="hint" id="imgHint"></p>
-
+      <input type="file" id="fileInput" accept="image/*" multiple hidden>
       <div class="inputrow">
-        <textarea id="input" rows="1" placeholder="粘贴习作原文,或直接打字…(Enter 发送,Shift+Enter 换行)"></textarea>
+        <button type="button" class="attach" id="imgBtn" aria-label="把习作照片发给我" title="把习作照片发给我">＋</button>
+        <textarea id="input" rows="1" placeholder="打字告诉我你是老师还是学生,或把习作贴在这里…(Enter 发送,Shift+Enter 换行)"></textarea>
         <button type="button" id="sendBtn" class="primary">发送</button>
       </div>
       <p class="ai-line" id="aiLine"></p>
@@ -50,39 +34,15 @@
   </section>
 </main>
 
-<footer class="foot">
-  批改依据单元训练点逐条检测,每条判断都附检测依据、可逐条复核;引文一律取自原文,不会编造。学生模式只提问、不代写。
-</footer>
-
-<!-- 图片文字识别与逐页校对 -->
-<div class="modal" id="ocrModal" hidden>
-  <div class="modal-box wide">
-    <header class="modal-head">
-      <b>图片文字识别与逐页校对</b>
-      <button type="button" id="ocrClose" class="iconbtn" aria-label="关闭">×</button>
-    </header>
-    <div class="ocr-bar" id="ocrBar"></div>
-    <div class="ocr-body" id="ocrBody"></div>
-    <div class="ocr-foot">
-      <div class="ocr-sum" id="ocrSum"></div>
-      <div class="ocr-foot-actions">
-        <label class="radio-line"><input type="checkbox" id="ocrPara" checked> 页间分段</label>
-        <label class="radio-line"><input type="radio" name="ocrMode" value="replace" checked> 替换输入框</label>
-        <label class="radio-line"><input type="radio" name="ocrMode" value="append"> 追加到输入框</label>
-        <button type="button" id="ocrApply" class="primary">放入输入框</button>
-      </div>
-      <p class="hint">识别结果不会直接发出去 —— 先逐页对照照片核对,再自己点发送。</p>
-    </div>
-  </div>
-</div>
-
-<!-- 图片放大 -->
+<!-- 图片放大:点对话里的缩略图看大图 -->
 <div class="zoom" id="zoomBox" hidden>
   <img id="zoomImg" alt="习作图片放大预览">
   <p class="zoom-tip">点击任意处关闭</p>
 </div>
 
-<!-- 接口设置:平台通道默认可用,自带密钥可覆盖 -->
+<!-- 接口设置:默认走平台免密钥通道,自带密钥可覆盖。
+     只保留这一个弹层 —— 密钥必须用密码框输入,不能写成对话消息。
+     入口也只在对话里(说一句"设置"),界面上不出现独立按钮。 -->
 <div class="modal" id="setModal" hidden>
   <div class="modal-box">
     <header class="modal-head">

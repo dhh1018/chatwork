@@ -52,13 +52,6 @@ main {
   max-width: 1240px;
   margin: 0 auto;
   padding: 0 20px 60px;
-  display: grid;
-  grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
-}
-@media (max-width: 900px) {
-  main { grid-template-columns: minmax(0, 1fr); }
 }
 
 .panel {
@@ -243,8 +236,6 @@ details.more ul { margin: 6px 0; padding-left: 18px; }
 .diff .up { color: var(--ok); }
 .diff .stay { color: var(--warn); }
 
-footer.foot { max-width: 1240px; margin: 0 auto; padding: 0 20px 40px; color: var(--text-3); font-size: 12px; line-height: 1.8; }
-
 .toast {
   position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%);
   background: var(--text); color: var(--bg); font-size: 13px;
@@ -255,9 +246,9 @@ footer.foot { max-width: 1240px; margin: 0 auto; padding: 0 20px 40px; color: va
 
 @media print {
   body { background: #fff; }
-  .input-panel, .toolbar, header.top p, footer.foot, .toast, .ai-box, .ai-line { display: none !important; }
-  #setModal, #ocrModal, .zoom { display: none !important; }
-  main { grid-template-columns: 1fr; padding: 0; max-width: none; }
+  .toolbar, header.top, .toast, .ai-box, .ai-line { display: none !important; }
+  #setModal, .zoom { display: none !important; }
+  main { padding: 0; max-width: none; }
   .panel { border: 0; padding: 0; }
   .sec { break-inside: avoid; }
 }
@@ -358,48 +349,33 @@ footer.foot { max-width: 1240px; margin: 0 auto; padding: 0 20px 40px; color: va
 .dot.off { background: var(--line-2); }
 .grow { flex: 1 1 auto; }
 
-.dropzone {
-  border: 1px dashed var(--line-2);
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-  padding: 13px 12px;
-  text-align: center;
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
-}
-.dropzone.on { border-color: var(--brand); background: var(--brand-soft); }
-.dz-main { font-size: 13px; color: var(--text-2); }
-.dz-btns { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
-.dz-btns button { padding: 6px 13px; font-size: 13px; }
-.dz-sub { font-size: 11px; color: var(--text-3); margin-top: 10px; line-height: 1.65; }
-
-.thumbs { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 4px; margin-top: 10px; }
-.thumb { position: relative; flex: none; width: 64px; }
-.thumb-img {
-  position: relative; width: 64px; height: 64px; overflow: hidden;
-  border: 1px solid var(--line-2); border-radius: 6px; background: var(--surface-2); cursor: pointer;
-}
-.thumb-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.thumb-no {
-  position: absolute; left: 0; top: 0; padding: 0 4px;
-  background: rgba(0, 0, 0, .62); color: #fff; font-size: 10px;
-  border-bottom-right-radius: 5px;
-}
-.thumb-st { font-size: 11px; color: var(--text-3); text-align: center; margin-top: 3px; }
-.thumb-st.ok { color: var(--ok); }
-.thumb-st.bad { color: var(--bad); }
-.thumb-st.run { color: var(--brand); }
-.thumb-del {
-  position: absolute; right: -5px; top: -5px; width: 17px; height: 17px; padding: 0;
-  border: 0; border-radius: 50%; background: var(--text); color: var(--bg);
-  font-size: 12px; line-height: 1; cursor: pointer;
-}
-.thumb-bad { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--bad); font-size: 18px; }
-
-.img-actions { display: flex; gap: 9px; margin-top: 10px; }
-.img-actions .primary { padding: 9px 14px; font-size: 14px; }
 button.ghost.sm { padding: 4px 9px; font-size: 12px; }
-button.ghost.on { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); }
+
+/* 图片消息:照片本身就是一条消息,和打字发出来的东西同级 */
+.msg.k-img .bubble { background: transparent; border: 0; padding: 0; }
+.imgmsg { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.imgcell {
+  position: relative; padding: 0; cursor: zoom-in; line-height: 0;
+  border: 1px solid var(--line-2); border-radius: 8px;
+  overflow: hidden; background: var(--surface-2);
+}
+.imgcell img { display: block; width: 96px; height: 96px; object-fit: cover; }
+.imgcell span {
+  position: absolute; left: 0; top: 0; padding: 0 5px;
+  background: rgba(0, 0, 0, .62); color: #fff;
+  font-size: 10px; line-height: 1.7; border-bottom-right-radius: 5px;
+}
+.imgmsg-cap { font-size: 12px; color: var(--text-3); margin-top: 6px; text-align: right; }
+
+/* 对话里的文字校对块:识别结果能直接在这里改 */
+.ocr-inline { margin-top: 12px; }
+.ocr-inline-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.ocr-inline-head .pgno { font-size: 13px; font-weight: 600; }
+.ocr-inline-head .ocr-stt { font-size: 12px; color: var(--text-3); line-height: 1.6; }
+.ocr-box {
+  width: 100%; min-height: 80px; max-height: 360px;
+  font-size: 14px; line-height: 1.85; background: var(--surface);
+}
 
 .src-bar {
   border: 1px solid var(--line-2); border-left: 3px solid var(--warn);
@@ -408,46 +384,7 @@ button.ghost.on { border-color: var(--brand); color: var(--brand); background: v
   font-size: 12px; line-height: 1.7; color: var(--text-2);
 }
 
-/* ============ 图片校对面板 ============ */
-.modal-box.wide { max-width: 900px; display: flex; flex-direction: column; overflow: hidden; }
-.ocr-bar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 10px 16px; border-bottom: 1px solid var(--line);
-  background: var(--surface-2); font-size: 12px; color: var(--text-2);
-}
-.ocr-body { padding: 14px 16px; overflow: auto; flex: 1 1 auto; }
-
-.ocr-page { border: 1px solid var(--line); border-radius: var(--radius-s); padding: 11px 12px; margin-bottom: 14px; background: var(--surface); }
-.ocr-tools { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 9px; }
-.pgno { font-size: 13px; font-weight: 600; }
-.ocr-st { font-size: 12px; color: var(--text-3); }
-.ocr-st.ok { color: var(--ok); }
-.ocr-st.fail { color: var(--bad); }
-.ocr-st.run { color: var(--brand); }
-.ocr-pair { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 12px; }
-@media (max-width: 760px) { .ocr-pair { grid-template-columns: minmax(0, 1fr); } }
-.ocr-imgwrap img {
-  width: 100%; display: block; cursor: zoom-in;
-  border: 1px solid var(--line); border-radius: 6px; background: #fff;
-}
-.ocr-imgbad { border: 1px dashed var(--line-2); border-radius: 6px; padding: 26px 12px; text-align: center; font-size: 12px; color: var(--bad); line-height: 1.7; }
-.ocr-imgmeta { font-size: 11px; color: var(--text-3); margin-top: 5px; }
-.ocr-text { width: 100%; min-height: 200px; font-size: 14px; line-height: 1.85; }
-.ocr-err { font-size: 12px; color: var(--bad); margin-top: 6px; line-height: 1.65; }
-.ocr-note { font-size: 11px; color: var(--text-3); margin-top: 6px; line-height: 1.65; }
-
-.ocr-foot {
-  border-top: 1px solid var(--line); padding: 11px 16px;
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  background: var(--surface);
-}
-.ocr-sum { font-size: 12px; color: var(--text-2); }
-.ocr-sum b { color: var(--text); }
-.ocr-foot-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.ocr-foot-actions .primary { flex: none; padding: 9px 16px; font-size: 14px; }
-.radio-line { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-2); cursor: pointer; }
-.radio-line input { accent-color: var(--brand); width: 14px; height: 14px; }
-
+/* ============ 图片放大 ============ */
 .zoom {
   position: fixed; inset: 0; z-index: 80;
   background: rgba(15, 17, 20, .9);
@@ -459,7 +396,7 @@ button.ghost.on { border-color: var(--brand); color: var(--brand); background: v
 .zoom-tip { color: #c9ced8; font-size: 12px; margin: 12px 0 0; }
 
 @media print {
-  .zoom, .ocr-modal-print-hide { display: none !important; }
+  .zoom { display: none !important; }
 }
 
 /* ============================================================
@@ -470,29 +407,17 @@ button.ghost.on { border-color: var(--brand); color: var(--brand); background: v
  * 沿用上面的样式,只是换了容器。
  * ========================================================== */
 
+/* 页头只有一块牌子:不放任何按钮,所有操作都在下面的对话里 */
 header.top {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
+  align-items: baseline;
+  gap: 10px;
   max-width: 920px;
-  padding: 20px 20px 12px;
+  padding: 18px 20px 10px;
 }
-header.top .brand { min-width: 0; }
-.chips { display: flex; gap: 8px; flex-wrap: wrap; flex: none; padding-top: 3px; }
-.chipbtn {
-  border: 1px solid var(--line-2);
-  background: var(--surface);
-  color: var(--text-2);
-  font-family: inherit;
-  font-size: 12px;
-  padding: 5px 12px;
-  border-radius: 20px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color .15s, border-color .15s, background .15s;
-}
-.chipbtn:hover { color: var(--brand); border-color: var(--brand); background: var(--brand-soft); }
+header.top h1 { font-size: 17px; }
+header.top .brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+header.top .tagline { color: var(--text-3); font-size: 12px; }
 
 main.chatwrap {
   display: block;
@@ -504,7 +429,7 @@ main.chatwrap {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
-  height: calc(100vh - 208px);
+  height: calc(100vh - 172px);
   min-height: 460px;
   max-height: 880px;
 }
@@ -625,21 +550,16 @@ main.chatwrap {
   background: var(--surface);
   padding: 12px 16px 10px;
 }
-.dropzone.mini {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  text-align: left;
-  padding: 8px 10px;
+/* 输入条:一个 ＋ 图片、一个文本框、一个发送。图片不再是"面板",而是一条消息。 */
+.inputrow { display: flex; align-items: flex-end; gap: 9px; }
+.attach {
+  flex: none; width: 44px; height: 44px; padding: 0;
+  border: 1px solid var(--line-2); border-radius: 10px;
+  background: var(--surface-2); color: var(--text-2);
+  font-size: 22px; line-height: 1; font-family: inherit; cursor: pointer;
+  transition: color .15s, border-color .15s;
 }
-.dropzone.mini .dz-tip { flex: 1 1 170px; font-size: 11px; color: var(--text-3); line-height: 1.5; }
-.dropzone.mini .count { flex: none; font-size: 11px; color: var(--text-3); }
-.composer .thumbs { margin-top: 8px; }
-.composer .img-actions { margin-top: 8px; }
-.composer .hint { margin: 6px 0 0; }
-
-.inputrow { display: flex; align-items: flex-end; gap: 9px; margin-top: 9px; }
+.attach:hover { color: var(--brand); border-color: var(--brand); }
 #input {
   flex: 1 1 auto;
   min-height: 0;
@@ -653,21 +573,18 @@ main.chatwrap {
 }
 #sendBtn { flex: none; padding: 11px 22px; font-size: 14px; border-radius: 10px; }
 .composer .ai-line { margin: 8px 0 0; }
-.composer .ai-line .linkbtn { margin-left: auto; }
-
-footer.foot { max-width: 920px; padding: 4px 20px 34px; }
+.ai-line-tip { color: var(--text-3); }
 
 @media (max-width: 640px) {
-  header.top { flex-direction: column; }
-  .chips { padding-top: 0; }
-  .chat-panel { height: calc(100vh - 236px); }
+  .chat-panel { height: calc(100vh - 174px); }
   .bubble { max-width: 94%; }
   .msg.me .bubble { max-width: 90%; }
   .bubble.card-bubble { padding: 12px; }
+  .imgcell img { width: 80px; height: 80px; }
 }
 
 @media print {
-  .composer, .quick, header.top .chips, .msg.k-note { display: none !important; }
+  .composer, .quick, .msg.k-note, .msg.k-img { display: none !important; }
   main.chatwrap { padding: 0; max-width: none; }
   .chat-panel { display: block; height: auto; min-height: 0; max-height: none; border: 0; padding: 0; overflow: visible; }
   .msglist { overflow: visible; padding: 0; }

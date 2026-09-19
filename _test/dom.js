@@ -2,15 +2,17 @@
  * dom.js — 对话式批改机器人:整页集成测试(jsdom)
  * ------------------------------------------------------------
  * 把整页(index.html + 全部脚本)放进 jsdom 里跑,按对话的顺序逐段验证:
- *   A 启动:先问身份            G 追问的引文闸与多轮上下文
- *   B 先发作文、后认身份        H 学生模式:只提问、不代写
- *   C 选身份 → 收文             I 平台免密钥通道(伪造平台 SDK)
- *   D 选单元 → 本地报告         J 图片:识别结果绝不自动发送
- *   E 无大模型时的追问          K 会话恢复:重开一页接着聊
- *   F 自带密钥 + 大模型增强
+ *   A 启动:只有对话框,先问身份      H 换身份:一句话切过去,换副眼睛重看同一篇
+ *   B 先发作文、后认身份             I 平台免密钥通道(伪造平台 SDK)
+ *   C 选身份 → 收文                  J 图片:经对话发出,识别的字要人工核对
+ *   D 选单元 → 本地报告              J2 有识图通道时同样要人核对
+ *   E 无大模型时的追问               K 会话恢复:重开一页接着聊
+ *   F 自带密钥 + 大模型增强          L 设置也从对话进
+ *   G 追问的引文闸与多轮上下文
  *
  * 三条不能破的规矩,在这里都要被真的按一遍:
  *   1) 训练点判定来自本地引擎;  2) 引用逐字来自原文;  3) 学生模式不代写。
+ * 另加一条界面的规矩:所有操作都在对话里,界面上没有第二个入口。
  * ============================================================ */
 const fs = require('fs'), vm = require('vm');
 const { JSDOM } = require('C:/Users/admin/.workbuddy/binaries/node/workspace/node_modules/jsdom');
@@ -84,6 +86,10 @@ const AI_STUDENT_TEXT = [
   '你已经把画面写出来了,再往下多问自己一句就好。'
 ].join('\n');
 
+/* 图片上"读到"的文字(识图链路用)。刻意用与 ESSAY 不重叠的文本,
+   这样"确认之前对话里没有它"才是一条真断言。 */
+const OCR_TEXT = '我家的小狗特别贪吃。每次我拿出狗粮,它就跑过来,尾巴摇得像个小风扇。';
+
 /* ------------------------------------------------------------
  * 页面工厂:每个用例拿一页干净的 DOM
  * ---------------------------------------------------------- */
@@ -118,7 +124,7 @@ function makePage(opt) {
       src: 'data:image/jpeg;base64,SRC_' + encodeURIComponent(f.name),
       w: 1600, h: 1200, origW: 3024, origH: 4032, scaled: true
     });
-    w.XZ_IMG.exportDataUrl = item => Promise.resolve({ url: 'data:image/jpeg;base64,PAGE' + item.id, w: 1200, h: 1600 });
+    w.XZ_IMG.exportDataUrl = item => Promise.resolve({ url: 'data:image/jpeg;base64,PAGE_' + encodeURIComponent(item.name || 'x'), w: 1200, h: 1600 });
   }
 
   p.$ = id => w.document.getElementById(id);
@@ -152,20 +158,36 @@ function sse(text, w, size) {
     body: { getReader: () => ({ read: () => Promise.resolve(i < frames.length ? { done: false, value: enc.encode(frames[i++]) } : { done: true }) }) }
   });
 }
+/* 把文件塞进 <input type=file>(jsdom 里没法真的选文件) */
+function mkFile(name) { return { name: name, type: 'image/jpeg', size: 900000 }; }
+function feed(p, input, files) {
+  Object.defineProperty(input, 'files', { value: files, configurable: true });
+  input.dispatchEvent(new p.w.Event('change', { bubbles: true }));
+}
 
 (async function () {
   /* ========================================================= */
-  console.log('\n[A] 启动:先问身份,再做别的');
+  console.log('\n[A] 启动:界面上只有对话框');
   const p = makePage();
   await bootPage(p);
 
   ok(!!p.w.XZ_KB && !!p.w.XZ_ENGINE && !!p.w.XZ_LLM && !!p.w.XZ_CLOUD && !!p.w.XZ_UI, '六个模块均挂载到 window');
-  ok(p.msgs().length === 1, '初始只有一条消息,实际 ' + p.msgs().length);
+  ok(p.msgs().length === 2, '初始只有开场与一句说明,实际 ' + p.msgs().length);
   ok(has(p.bot(), '习作批改机器人'), '开场自报家门');
   ok(p.all('.qbtn').length === 2, '给出两个身份快捷按钮');
   ok(p.actIds().every(x => x.indexOf('role:') === 0), '按钮是身份动作:' + p.actIds().join(','));
-  ok(p.$('roleChip').textContent === '身份:未选择', '顶栏身份为未选择:' + p.$('roleChip').textContent);
-  ok(p.$('unitChip').textContent === '单元:未选择', '顶栏单元为未选择');
+
+  /* 界面规矩:对话之外不该有第二个入口 */
+  ok(!p.$('roleChip') && !p.$('unitChip'), '没有身份/单元切换 chip —— 换身份只能在对话里说');
+  ok(!p.w.document.querySelector('.chips'), '页头上没有任何按钮区');
+  ok(!p.$('thumbs') && !p.$('imgActions') && !p.$('imgHint'), '没有面板式的图片上传区');
+  ok(!p.$('ocrModal') && !p.$('ocrBody'), '没有图片校对弹层(校对已挪进对话)');
+  ok(!p.w.document.querySelector('footer'), '没有页脚说明栏');
+  const composerBtns = Array.from(p.w.document.querySelectorAll('.composer button'));
+  ok(composerBtns.length === 2, '输入条上只有两个按钮(发图片 / 发送),实际 ' + composerBtns.length +
+    ':' + composerBtns.map(b => b.id || b.textContent).join(','));
+  ok(!!p.$('msgList'), '页面的主体就是消息流');
+  ok(has(p.bot(), '设置'), '开场就把"想换模型就说一句设置"告诉用户');
   ok(has(p.$('aiLine').textContent, '本地检测引擎'), '未配置时状态行如实说明走本地引擎:' + p.$('aiLine').textContent.trim());
   ok(p.errors.length === 0, '初始化无脚本错误', p.errors.join(' | '));
 
@@ -187,7 +209,7 @@ function sse(text, w, size) {
   ok(unitActs.length === 17, '给出 16 个单元 + 通用标准共 17 个选择,实际 ' + unitActs.length);
   ok(unitActs.indexOf('unit:generic') !== -1, '含"不确定是哪个单元"的出口');
   ok(has(p.bot(), '这是哪个单元的习作'), '明确问单元,而不是自己猜一个');
-  ok(p.$('unitChip').textContent === '单元:未选择', '还没定之前 chip 不谎报');
+  ok(has(p.bot(), '＋'), '需要照片时告诉用户点哪里');
   ok(p.cards().length === 0, '单元未定就不出批改');
 
   /* ========================================================= */
@@ -199,6 +221,7 @@ function sse(text, w, size) {
   const h1 = bodyOf(card1);
   ok(has(h1, '单元训练点') && has(h1, '两个优点') && has(h1, '一个主要问题') && has(h1, '面批金句'), '老师模式五段结构齐全');
   ok(has(h1, '老师模式'), '卡片标明本次身份');
+  ok(has(h1, '介绍一种事物'), '卡片写明本单元是哪一课');
   ok(has(h1, '检测依据'), '每条训练点附检测依据,可逐条复核');
   ok(has(h1, '字数'), '给出字数/段落/句数');
   ok(!has(h1, '想一想') && !has(h1, '自我检查清单'), '不混入学生模式的段落');
@@ -206,8 +229,6 @@ function sse(text, w, size) {
   ok(q1.length > 0 && q1.every(x => flat(ESSAY).indexOf(flat(x)) !== -1), '卡片里每条「」引用都逐字来自原文');
   ok(!/分数|等级|排名|星级/.test(h1), '不出现分数等级排名星级');
   ok(!/\d+\s*分(?![钟析])/.test(h1), '不出现任何形式的打分');
-  ok(p.$('roleChip').textContent === '身份:老师', '顶栏身份已更新');
-  ok(p.$('unitChip').textContent === '单元:第五单元(习作单元)《介绍一种事物》', '顶栏单元已更新:' + p.$('unitChip').textContent);
   ok(has(p.bot(), '本地检测引擎'), '说明这份由本地引擎给出,不冒充大模型');
   const sv1 = JSON.parse(p.w.localStorage.getItem('xz_chat_v1') || 'null');
   ok(sv1 && sv1.role === 'teacher' && sv1.unitId === '5a-5', '会话写入本机存储(免登录前提下的取舍)');
@@ -221,13 +242,16 @@ function sse(text, w, size) {
   ok(has(p.last().textContent, '本次对照的训练点'), '能列出本单元训练点与判定');
   p.send('今天天气不错');
   ok(has(p.last().textContent, '只能回答这固定的几类问题'), '超出范围时如实说明,不硬编');
-  ok(!!p.last().querySelector('[data-act="open-set"]'), '并给出接通大模型的入口');
-  p.click(p.last().querySelector('[data-act="open-set"]'));
-  ok(p.$('setModal').hidden === false, '点一下就能打开接口设置');
-  ok(has(p.$('chLine').textContent, '当前通道'), '设置面板里说清当前通道:' + p.$('chLine').textContent.trim().slice(0, 40));
+  ok(!!p.last().querySelector('[data-act="set-hint"]'), '并给出"怎么接通大模型"的出口');
+  p.click(p.last().querySelector('[data-act="set-hint"]'));
+  ok(has(p.last().textContent, '说一句「设置」就行'), '用对话告诉用户怎么进去,而不是甩一个按钮');
 
   /* ========================================================= */
   console.log('\n[F] 自带密钥 + 大模型增强(流式)');
+  p.send('设置');
+  ok(p.$('setModal').hidden === false, '在对话里说一句"设置"就打开面板');
+  ok(has(p.bot(), '打开接口设置'), '并说明面板为什么打开');
+
   p.$('aiOn').checked = true;
   p.$('aiPreset').value = 'deepseek';
   p.$('aiBase').value = 'https://api.deepseek.com/v1';
@@ -258,6 +282,7 @@ function sse(text, w, size) {
   const h2 = bodyOf(card2);
   ok(has(h2, '写出了具体的动作'), '采用了大模型给出的点评措辞');
   ok(has(h2, '单元训练点'), '训练点判定仍是本地引擎给的(判定权不外移)');
+  ok(has(h2, '介绍一种事物'), '会话仍在同一单元上');
   ok(!has(h2, '示范改写'), '"无需示范"没有被渲染成空段落');
   ok(!has(h2, '猫的眼睛像两颗蓝宝石'), '正文里不出现编造引文');
   ok(has(card2.innerHTML, '猫的眼睛像两颗蓝宝石'), '编造引文只留在原始输出折叠区供教师复核');
@@ -269,7 +294,6 @@ function sse(text, w, size) {
   ok(reqs.length === 1 && reqs[0].body.messages[0].role === 'system', '请求以 system 打头');
   ok(has(reqs[0].body.messages[1].content, '<<<ESSAY'), '把学生原文一并送进去');
   ok(has(reqs[0].body.messages[1].content, '不得推翻'), '并声明训练点判定不得推翻');
-  ok(p.$('unitChip').textContent.indexOf('介绍一种事物') !== -1, '会话仍在同一单元上');
 
   /* ========================================================= */
   console.log('\n[G] 追问:编造的引用过不去,原文的引用留得下');
@@ -291,17 +315,15 @@ function sse(text, w, size) {
   ok(lastReq.messages[lastReq.messages.length - 1].role === 'user', '最后一轮是用户这句话');
 
   /* ========================================================= */
-  console.log('\n[H] 学生模式:只提问、不代写');
-  p.click(p.$('roleChip'));
-  ok(has(p.last().textContent, '切换身份'), '点顶栏身份 chip 可随时切换');
-  p.click(p.ql('[data-act="role:student"]'));
-  ok(has(p.bot(), '学生模式'), '切到学生模式');
-  ok(has(p.bot(), '我不会替你写'), '一开始就把"不代写"说在前面');
+  console.log('\n[H] 换身份:一句话切过去,换副眼睛重看同一篇');
+  const cardsBefore = p.cards().length;
   p.w.fetch = function (url, opt) { reqs.push({ url: url, body: JSON.parse(opt.body) }); return sse(AI_STUDENT_TEXT, p.w)(); };
-  p.send(ESSAY);
-  p.click(p.ql('[data-act="unit:5a-5"]'));
-  const cards3 = p.cards();
-  const card3 = cards3[cards3.length - 1];
+  p.send('换成学生模式');
+  ok(has(p.bot(), '学生模式'), '在对话里说一句就能换身份');
+  ok(has(p.bot(), '换一副眼睛重看一遍'), '换身份不是重来一遍,而是用新视角看同一篇');
+  ok(has(p.bot(), '我不会替你写'), '换过去时也把"不代写"说在前面');
+  ok(p.cards().length === cardsBefore + 1, '并为同一篇另出一张学生模式的卡片');
+  const card3 = p.cards()[p.cards().length - 1];
   ok(await waitFor(() => !!card3.querySelector('.ai-meta'), 3000), '学生模式卡片完成增强');
   const h3 = bodyOf(card3);
   ok(has(h3, '想一想') && has(h3, '自我检查清单'), '给出提问与自查清单');
@@ -310,6 +332,9 @@ function sse(text, w, size) {
   const q3 = quotes(h3);
   ok(q3.length > 0 && q3.every(x => flat(ESSAY).indexOf(flat(x)) !== -1), '学生模式的引用同样逐字来自原文');
   ok(q3.every(x => x.length <= 40), '没有成段照搬的成品文字');
+  const sReq = reqs[reqs.length - 1].body;
+  ok(has(sReq.messages[0].content, '绝不代写'), '学生模式的对话纪律随请求下发');
+  ok(!has(sReq.messages[0].content, '同行说话'), '换身份后不再带着老师模式的口径说话');
 
   /* 反代写闸:模型想给成品句,也落不到界面上 */
   const STUDENT_REPLY = '你可以把「猫是一种很常见的动物」改成「我家那只黑白相间的猫很可爱」,这样更好。';
@@ -317,12 +342,12 @@ function sse(text, w, size) {
   p.send('帮我改一句');
   ok(await waitFor(() => !p.$('msgList').querySelector('.msg.k-stream'), 3000), '学生追问完成');
   const sHtml = p.last().innerHTML;
-  const sReq = reqs[reqs.length - 1].body;
+  const sReq2 = reqs[reqs.length - 1].body;
   ok(!has(sHtml, '我家那只黑白相间的猫'), '模型给的成品句被拦下,没有落到界面上');
   ok(has(sHtml, '这里由你自己动笔'), '拦下处换成了明确的"不代写"说明');
   ok(has(sHtml, '拦下 1 处代写内容'), '并告诉用户拦了几处:' + ((p.last().querySelector('.mini') || {}).textContent || ''));
-  ok(has(sReq.messages[0].content, '绝不代写'), '学生模式的对话纪律随请求下发');
-  ok(has(sReq.messages[0].content, '一次最多问 3 个问题'), '并限制提问数量,避免一串问题砸下来');
+  ok(has(sReq2.messages[0].content, '绝不代写'), '学生模式的对话纪律随请求下发');
+  ok(has(sReq2.messages[0].content, '一次最多问 3 个问题'), '并限制提问数量,避免一串问题砸下来');
 
   /* ========================================================= */
   console.log('\n[I] 平台免密钥通道:不填任何东西也能用');
@@ -397,30 +422,42 @@ function sse(text, w, size) {
   ok(q.errors.length === 0, '平台通道路径无脚本错误', q.errors.join(' | '));
 
   /* ========================================================= */
-  console.log('\n[J] 图片:识别结果绝不自动发送');
-  const mkFile = (name, type) => ({ name: name, type: type || 'image/jpeg', size: 900000 });
-  function feed(input, files) {
-    Object.defineProperty(input, 'files', { value: files, configurable: true });
-    input.dispatchEvent(new p.w.Event('change', { bubbles: true }));
-  }
-  ok(p.$('thumbs').hidden === true, '初始没有图片');
-  feed(p.$('fileInput'), [mkFile('p1.jpg')]);
-  ok(await waitFor(() => p.$('thumbs').querySelectorAll('.thumb').length === 1, 2000), '图片进入缩略图栏');
-  ok(p.$('ocrModal').hidden === false, '来图后自动打开校对面板');
-  ok(has(p.$('ocrBody').innerHTML, '第 1 页'), '校对面板按页生成');
-  const OCR_TEXT = '这句话只在图片校对里出现,不在任何已发送的消息里。';
-  const before = p.msgs().length;
-  const ta = p.$('ocrBody').querySelector('textarea');
-  ta.value = OCR_TEXT;
-  ta.dispatchEvent(new p.w.Event('input', { bubbles: true }));
-  ok(has(p.$('ocrSum').textContent, '已识别 1'), '汇总行同步:' + p.$('ocrSum').textContent.trim());
-  ok(p.$('ocrApply').disabled === false, '有文字后"放入输入框"可用');
-  p.click(p.$('ocrApply'));
-  ok(has(p.$('input').value, '这句话只在图片校对里出现'), '校对结果只填进输入框');
-  ok(p.$('ocrModal').hidden === true, '采用后收起校对面板');
-  ok(p.msgs().length === before, '没有新增任何消息 —— 识别结果不会被当成正文自动发出去');
-  ok(!has(p.bot(), '这句话只在图片校对里出现'), '消息流里也找不到它');
+  console.log('\n[J] 图片:经对话发出去,识别的字要人工核对才作数');
+  const nBefore = p.msgs().length;
+  feed(p, p.$('fileInput'), [mkFile('p1.jpg')]);
+  ok(await waitFor(() => !!p.q('.msg.k-img'), 2000), '选好的照片以一条消息出现在对话里');
+  const imgMsg = p.q('.msg.k-img');
+  ok(imgMsg.classList.contains('me'), '照片消息在右侧,和用户自己说的话同级');
+  ok(imgMsg.querySelectorAll('img').length === 1, '消息里能看到照片本身');
+  ok(has(imgMsg.textContent, '1 页'), '并标明共几页');
+  ok(await waitFor(() => !!p.q('.ocr-box'), 2000), '机器人随即在对话里给出可改的校对块');
+  ok(has(p.bot(), '没有可用的识图通道'), '没有识图通道时如实说明,并请人对着照片录入');
+  ok(p.msgs().length === nBefore + 2, '此刻只多了"照片"和"校对块"两条消息,没有自动发出去的正文');
+
+  const box = p.q('.ocr-box');
+  box.value = OCR_TEXT;
+  ok(!has(p.bot(), OCR_TEXT), '还没确认之前,这段文字不在对话里 —— 未经核对不算数');
+  ok(p.msgs().length === nBefore + 2, '也不会因为框里有了字就自动发出去');
+  p.click(p.ql('[data-act="img:ok"]'));
+  ok(has(p.bot(), OCR_TEXT), '点了"就按这些字批改",它才作为用户发的正文进入对话');
+  ok(has(p.bot(), '这是哪个单元的习作'), '接着问单元,和打字发作文走同一条路');
+  p.click(p.ql('[data-act="unit:5a-5"]'));
+  await sleep(20);
+  const card5 = p.cards()[p.cards().length - 1];
+  ok(has(bodyOf(card5), '原文来自图片识别'), '报告里披露"原文来自图片识别",不隐瞒来源');
+  ok(has(bodyOf(card5), '共 1 页'), '并写明共几页');
   ok(p.errors.length === 0, '图片流程无脚本错误', p.errors.join(' | '));
+
+  /* ========================================================= */
+  console.log('\n[J2] 有识图通道时:自动读字,但仍然要人核对');
+  CP.mode = 'ok'; CP.calls = 0; CP.text = OCR_TEXT;
+  feed(q, q.$('fileInput'), [mkFile('s1.jpg')]);
+  ok(await waitFor(() => !!q.q('.ocr-box'), 5000), '平台通道下照片被自动读成文字');
+  ok(Array.isArray(CP.body.messages[1].content), '识图请求按多模态格式组装(文字 + 图片)');
+  ok(has(JSON.stringify(CP.body.messages[1].content), 'image_url'), '压缩后的图片内联发给识图模型');
+  ok(q.q('.ocr-box').value.indexOf('我家的小狗') !== -1, '读到的字预填进校对框,等人核对');
+  ok(has(q.bot(), '请对着照片核一遍'), '明确要求人工核对,绝不自动采用');
+  ok(q.errors.length === 0, '识图路径无脚本错误', q.errors.join(' | '));
 
   /* ========================================================= */
   console.log('\n[K] 会话恢复:重开一页还能接着聊');
@@ -430,10 +467,20 @@ function sse(text, w, size) {
   await bootPage(p2);
   ok(has(p2.bot(), '接着上次的聊'), '重开后接着上次的会话,不从头开始');
   ok(p2.cards().length >= 1, '上次的批改卡片被恢复渲染');
-  ok(p2.$('roleChip').textContent === '身份:' + (sv2.role === 'teacher' ? '老师' : '学生'), '顶栏恢复身份:' + p2.$('roleChip').textContent);
-  ok(p2.$('unitChip').textContent !== '单元:未选择', '顶栏恢复单元:' + p2.$('unitChip').textContent);
-  ok(!!p2.ql('[data-act="new-essay"]'), '并给出"再批一篇"的出口');
+  ok(has(p2.bot(), sv2.report.unit.title), '恢复出上次批的是哪一篇:' + sv2.report.unit.title);
+  ok(has(p2.bot(), '换成老师模式'), '并告诉用户换身份就直接说');
+  ok(!!p2.ql('[data-act="new-essay"]'), '给出"再批一篇"的出口');
   ok(p2.errors.length === 0, '恢复路径无脚本错误', p2.errors.join(' | '));
+
+  /* ========================================================= */
+  console.log('\n[L] 设置也从对话进,界面上没有第二个入口');
+  ok(!p2.w.document.querySelector('.composer [data-act="setting"]'), '输入条上没有"设置"按钮');
+  p2.send('设置');
+  ok(p2.$('setModal').hidden === false, '说一句"设置"就打开面板');
+  ok(has(p2.bot(), '打开接口设置'), '并说明面板为什么打开,不是凭空弹出来');
+  p2.click(p2.$('setClose'));
+  ok(p2.$('setModal').hidden === true, '关掉面板回到对话,流程不断');
+  ok(p2.errors.length === 0, '设置路径无脚本错误', p2.errors.join(' | '));
 
   console.log('\n==============================');
   console.log('通过 ' + pass + ' / 失败 ' + fail + '  (共 ' + (pass + fail) + ' 项)');

@@ -1,10 +1,11 @@
 /* ============================================================
  * chat.js — 对话式批改机器人
  * ------------------------------------------------------------
- * 一条对话把整件事串起来:
- *   问身份 → 收习作(文字或照片) → 确认单元 → 出批改 → 自由追问
+ * 一条对话把整件事串起来,界面上没有第二个入口:
+ *   问身份 → 收习作(文字或照片) → 核对图片文字 → 确认单元 → 出批改 → 自由追问
+ * 换身份、换单元、改接口设置、重发照片,全部靠对话里的说法触发。
  *
- * 三条不能破的规矩(与表单版一致,只是换了外壳):
+ * 三条不能破的规矩:
  *   1) 训练点的达成判断只来自本地引擎,大模型负责讲清楚,不负责定级。
  *   2) 任何引用必须逐字来自学生原文,校验不通过就换成本地选出的原句。
  *   3) 学生模式绝不代写:输出结构里不存在成品句段,模型想写也落不到界面上。
@@ -13,7 +14,9 @@
   'use strict';
 
   var KB = window.XZ_KB, ENG = window.XZ_ENGINE, LLM = window.XZ_LLM,
-    CLOUD = window.XZ_CLOUD, UI = window.XZ_UI;
+    CLOUD = window.XZ_CLOUD, UI = window.XZ_UI, XIMG = window.XZ_IMG;
+
+  var MAXP = (XIMG && XIMG.MAX_PAGES) || 12;
 
   var $ = function (id) { return document.getElementById(id); };
   function esc(s) {
@@ -21,6 +24,7 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  function plain(s) { return String(s == null ? '' : s).replace(/[\s\u3000]/g, ''); }
   function toast(msg) {
     var t = $('toast');
     if (!t) return;
@@ -67,12 +71,14 @@
     anchors: []
   };
 
+  var ROLE_LABEL = { teacher: '老师', student: '学生' };
+
   /* ------------------------------------------------------------
    * 状态
    * ---------------------------------------------------------- */
   var S = {
     role: null,            /* teacher | student */
-    stage: 'boot',         /* boot | await_role | await_essay | await_unit | ready */
+    stage: 'boot',         /* boot | await_role | await_essay | await_unit | await_img_confirm | ready */
     essay: '',             /* 最近一次批改用的原文 */
     pendingEssay: '',      /* 已收到、还没定单元的原文 */
     book: '5a',
@@ -83,9 +89,10 @@
     reportCtx: null,
     busy: false,
     ctrl: null,
-    imgSrc: null
+    imgPages: null,        /* 待核对的图片(压缩后) */
+    imgSrc: null           /* 本次批改的正文是否来自图片 */
   };
-  var ACT = {};            /* 快捷按钮 → 处理函数 */
+  var ACT = {};            /* 对话里的按钮 → 处理函数 */
   var SAVE = 'xz_chat_v1';
 
   function newConvId() {
@@ -126,7 +133,7 @@
   }
 
   /* ------------------------------------------------------------
-   * 快捷按钮
+   * 对话里的按钮
    * ---------------------------------------------------------- */
   function roleActions() {
     return [
@@ -152,17 +159,6 @@
     return acts;
   }
 
-  /* ------------------------------------------------------------
-   * 顶栏状态
-   * ---------------------------------------------------------- */
-  function renderChips() {
-    var r = $('roleChip'), u = $('unitChip');
-    if (r) r.textContent = '身份:' + (S.role === 'teacher' ? '老师' : S.role === 'student' ? '学生' : '未选择');
-    if (u) {
-      var cur = currentUnit();
-      u.textContent = '单元:' + (cur ? (cur.generic ? '通用标准' : cur.no + '《' + cur.title + '》') : '未选择');
-    }
-  }
   function currentUnit() {
     if (S.unitId === 'generic') return GENERIC;
     var list = allUnits();
@@ -194,56 +190,204 @@
   }
 
   /* ------------------------------------------------------------
-   * 流程
+   * 流程:开场与身份
    * ---------------------------------------------------------- */
   function start() {
     S.stage = 'await_role';
     sayBot(
-      '你好,我是<b>习作批改机器人</b>。要把批改说准,得先知道坐在对面的是谁 —— 同一个问题,对老师和对学生说的话是不一样的。<br><br><b>你是哪一种?</b>（之后随时可以切换）',
+      '你好,我是<b>习作批改机器人</b>。要把批改说准,得先知道坐在对面的是谁 —— 同一个问题,对老师和对学生说的话是不一样的。<br><br><b>你是哪一种?</b>',
       roleActions()
     );
-    renderChips();
+    sayNote('<span class="dim">选好之后随时可以直接跟我说「换成学生模式」「换成老师模式」。手写习作拍照片发我(点左下角 <b>＋</b>);想用自己的模型,说一句「设置」。</span>');
   }
 
+  /** 首次选定身份:await_role 阶段的回答 */
   function setRole(role, reason) {
     S.role = role;
-    renderChips();
     var pending = !!S.pendingEssay;
-    if (role === 'teacher') {
-      sayBot('好,<b>老师模式</b>。' + (pending ? '你刚才发的那篇我先收着。' : '') +
-        '把学生的习作发给我 —— 直接粘贴文字,或者点左下角「图片」上传照片(手写也可以)。<br>' +
-        '我会按<b>本单元的写作要求</b>逐条对照,给你一份能直接用的批改报告:两个优点、一个主要问题、改法,还有可以当面念给学生听的话。');
-    } else {
-      sayBot('好,<b>学生模式</b>。' + (pending ? '你刚才发的那篇我先收着。' : '') +
-        '把你写的那篇发给我 —— 直接粘贴,或者点左下角「图片」上传作文照片。<br>' +
-        '先说清楚:<b>我不会替你写</b>。我会告诉你哪一句写得好,然后问你几个问题,帮你自己想明白该怎么改。');
-    }
+    sayBot(roleLine(role) + (pending ? '你刚才发的那篇我先收着。' : '') + roleTask(role));
     if (reason) sayNote('<span class="dim">' + esc(reason) + '</span>');
     if (pending) askUnit();
     else S.stage = 'await_essay';
+    saveSession();
+  }
+
+  function roleLine(role) {
+    return '好,<b>' + ROLE_LABEL[role] + '模式</b>。';
+  }
+  function roleTask(role) {
+    return role === 'teacher'
+      ? '把学生的习作发给我 —— 直接粘贴文字,或者点左下角 <b>＋</b> 发照片(手写也可以)。<br>我会按<b>本单元的写作要求</b>逐条对照,给你一份能直接用的批改报告:两个优点、一个主要问题、改法,还有可以当面念给学生听的话。'
+      : '把你写的那篇发给我 —— 直接粘贴,或者点左下角 <b>＋</b> 发作文照片。<br>先说清楚:<b>我不会替你写</b>。我会告诉你哪一句写得好,然后问你几个问题,帮你自己想明白该怎么改。';
+  }
+
+  /**
+   * 随时换身份。切换就是换一副眼睛看同一篇作文:
+   *   老师要的是能直接用的批改报告,学生要的是自己动笔的线索。
+   */
+  function switchRole(role) {
+    if (role === 'ask') {
+      sayBot('换成哪一种?这会影响我之后怎么跟你说话:', roleActions());
+      return;
+    }
+    if (S.role === role) {
+      sayBot('我现在就是<b>' + ROLE_LABEL[role] + '模式</b>。' +
+        (S.essay ? '还想问什么,直接说。' : '把习作发给我吧。'));
+      return;
+    }
+    S.role = role;
+    /* 换了身份就是换了一种说话方式,旧的多轮上下文不再带着走 */
+    S.convId = newConvId();
+    S.ctx = [];
+
+    if (S.pendingEssay) {
+      sayBot(roleLine(role) + '你刚发的那篇我按这个身份接着看。' + roleTask(role));
+      askUnit();
+      return;
+    }
+    if (S.essay && S.unitId && currentUnit()) {
+      sayBot(roleLine(role) + '刚才那篇我<b>换一副眼睛重看一遍</b> —— 同一篇作文,老师要的是能直接用的批改报告,学生要的是自己动笔的线索。' +
+        (role === 'student' ? '<br><b>我不会替你写</b>,只会问你几个问题。' : ''));
+      S.pendingEssay = S.essay;
+      startGrade(currentUnit());
+      return;
+    }
+    sayBot(roleLine(role) + roleTask(role));
+    S.stage = 'await_essay';
+    saveSession();
   }
 
   function askUnit() {
-    var n = S.pendingEssay.replace(/[\s\u3000]/g, '').length;
+    var n = plain(S.pendingEssay).length;
     S.stage = 'await_unit';
-    renderChips();
     sayBot('收到,<b>' + n + ' 字</b>。<br>批改要对着单元训练点才准,所以还差一步:<b>这是哪个单元的习作?</b>',
       unitActions());
     sayNote('<span class="dim">上册 8 个、下册 8 个,按你班上的进度选。确实记不清就选最后一项,我按通用标准批,但会写清楚"没对照单元训练点"。</span>');
   }
 
+  /* ------------------------------------------------------------
+   * 流程:图片(作为一条消息发出 → 对话里核对 → 采用)
+   * ---------------------------------------------------------- */
+  function onFiles(files) {
+    if (S.busy) { toast('正在生成,稍等一下'); return; }
+    UI.compressFiles(files).then(function (r) {
+      if (r.failed.length) sayBad('有 ' + r.failed.length + ' 张没读进来:' + esc(r.failed[0]));
+      if (r.skipped) sayNote('<span class="dim">有 ' + r.skipped + ' 个文件被跳过 —— 只收图片,单次最多 ' + MAXP + ' 页。</span>');
+      if (!r.ok.length) {
+        if (!r.failed.length && !r.skipped) sayBad('没有可用的图片。');
+        return;
+      }
+      S.imgPages = r.ok;
+      S.imgSrc = { pages: r.ok.length };
+      sayUserImages(r.ok);
+      readImages();
+    });
+  }
+
+  /** 用户发的图片本身也是一条消息 —— 和打字发消息是同一种东西 */
+  function sayUserImages(items) {
+    return addMsg({
+      who: 'user', kind: 'img',
+      html: '<div class="imgmsg">' + items.map(function (it, i) {
+        return '<button type="button" class="imgcell" aria-label="第 ' + (i + 1) + ' 页">' +
+          '<img src="' + esc(it.src) + '" alt="第 ' + (i + 1) + ' 页习作">' +
+          '<span>' + (i + 1) + '</span></button>';
+      }).join('') + '</div>' +
+        '<div class="imgmsg-cap">习作照片 ' + items.length + ' 页 · 点开可放大</div>'
+    });
+  }
+
+  /** 机器人读图:逐页识别,读到的字立刻流式显示,读完给出可改的校对块 */
+  function readImages() {
+    var items = S.imgPages || [];
+    if (!items.length) return;
+    S.stage = 'await_img_confirm';
+
+    if (!(LLM && LLM.isVisionReady && LLM.isVisionReady())) {
+      showOcrBox({ pages: items.map(function () { return { text: '', err: '' }; }), manual: true });
+      return;
+    }
+
+    if (S.ctrl) { try { S.ctrl.abort(); } catch (e) { } }
+    var ctrl = new AbortController();
+    S.ctrl = ctrl;
+    S.busy = true; setBusy(true);
+
+    var live = addMsg({ who: 'bot', kind: 'stream', title: '正在读第 1 / ' + items.length + ' 页…' });
+    var pre = live.querySelector('.ai-raw');
+
+    UI.ocrPages(items, {
+      signal: ctrl.signal,
+      onPage: function (i, n) {
+        var b = live.querySelector('.ai-head b');
+        if (b) b.textContent = '正在读第 ' + (i + 1) + ' / ' + n + ' 页…';
+        if (i > 0) pre.textContent += '\n\n—— 第 ' + (i + 1) + ' 页 ——\n';
+        scrollEnd();
+      },
+      onDelta: function (d) { pre.textContent += d; scrollEnd(); }
+    }).then(function (res) {
+      S.busy = false; setBusy(false);
+      live.remove();
+      showOcrBox(res);
+    }, function (e) {
+      S.busy = false; setBusy(false);
+      live.remove();
+      sayBad('识图没能完成:' + esc((e && e.message) || String(e)));
+      showOcrBox({ pages: items.map(function () { return { text: '', err: '' }; }) });
+    });
+  }
+
+  /**
+   * 校对块:识别结果放在对话里,能直接改。
+   * 识别结果绝不自动当成正文 —— 只有使用者点了"就按这些字批改"才算数。
+   */
+  function showOcrBox(res) {
+    var pages = (res && res.pages) || [];
+    var total = pages.reduce(function (n, p) { return n + plain(p.text).length; }, 0);
+    var manual = !!(res && res.manual);
+
+    var head;
+    if (manual) {
+      head = '我这边<b>没有可用的识图通道</b>,读不了照片上的字。麻烦你对着照片把文字打进来 —— ' +
+        '错别字、病句、标点都照原样,别顺手改对(改对了我反而批不出真实的问题)。';
+    } else if (total) {
+      head = '照片 <b>' + pages.length + ' 页</b>,我读到这些字(共 <b>' + total + '</b> 字)。<br>' +
+        '<b>请对着照片核一遍</b> —— 识别错了,批改就跟着错。有漏字、错字,直接在下面对话框里改。';
+    } else {
+      head = '这几张照片我<b>没读出文字</b>。可能是拍得偏暗、发糊,或者画面里没有字。<br>重拍一张再发我也行,或者对着照片把文字打进来。';
+    }
+
+    var html = head + pages.map(function (p, i) {
+      var n = plain(p.text).length;
+      var rows = Math.min(12, Math.max(3, Math.ceil(n / 24) || 3));
+      return '<div class="ocr-inline">' +
+        '<div class="ocr-inline-head"><span class="pgno">第 ' + (i + 1) + ' 页</span>' +
+        '<span class="ocr-stt">' + (p.err ? esc(p.err) : n + ' 字') + '</span></div>' +
+        '<textarea class="ocr-box" data-page="' + (i + 1) + '" rows="' + rows + '" ' +
+        'placeholder="对着第 ' + (i + 1) + ' 页照片,把文字打在这里…">' + esc(p.text || '') + '</textarea>' +
+        '</div>';
+    }).join('');
+
+    sayBot(html, [
+      { id: 'img:ok', label: '就按这些字批改', cls: 'pri' },
+      { id: 'img:redo', label: '我重发图片', cls: 'dim' }
+    ]);
+  }
+
+  /* ------------------------------------------------------------
+   * 流程:批改
+   * ---------------------------------------------------------- */
   function startGrade(unit) {
     var essay = S.pendingEssay;
     S.pendingEssay = '';
     S.essay = essay;
     S.unitId = unit.id;
     S.stage = 'ready';
-    renderChips();
 
     var isTeacher = S.role === 'teacher';
     var roleInfo = {
       role: S.role, confident: true,
-      reason: '你在对话里选定了' + (isTeacher ? '老师模式' : '学生模式') + ',并指定了' + unit.no + '《' + unit.title + '》'
+      reason: '你在对话里选定了' + ROLE_LABEL[S.role] + '模式,并指定了' + unit.no + '《' + unit.title + '》'
     };
     var an = ENG.analyze(unit, essay);
     var local = isTeacher ? ENG.buildTeacher(unit, an) : ENG.buildStudent(unit, an);
@@ -273,8 +417,7 @@
     if (LLM && LLM.hasChannel()) {
       streamGrade({ unit: unit, essay: essay, local: local, ctx: ctx, el: el, isTeacher: isTeacher });
     } else {
-      sayNote('<span class="dim">这份由<b>本地检测引擎</b>给出:每条判断都附了检测依据,引文全部取自原文,可以逐条复核。当前没有接通大模型,所以只能回答固定的几点 —— 想看它像人一样跟你聊,点下面的「设置」接通一下。</span>',
-        []);
+      sayNote('<span class="dim">这份由<b>本地检测引擎</b>给出:每条判断都附了检测依据,引文全部取自原文,可以逐条复核。当前没有接通大模型,所以只能回答固定的几点 —— 想看它像人一样跟你聊,跟我说一句「设置」接通一下。</span>');
     }
 
     sayBot(isTeacher
@@ -484,21 +627,22 @@
       parts.push('现在没有接通大模型,我只能回答这固定的几类问题(怎么改 / 本单元要求 / 常见问题 / 面批话术 / 哪里写得好)。');
     }
     parts.push('<span class="dim">以上来自内置单元档案与本地检测结果' + (afterFail ? ',大模型这次没能接上' : ';接通大模型后可以就任意细节追问') + '。</span>');
-    sayBot(parts.join('<br>'), afterFail ? null : [{ id: 'open-set', label: '去接通大模型', cls: 'dim' }]);
+    sayBot(parts.join('<br>'),
+      afterFail ? null : [{ id: 'set-hint', label: '怎么接通大模型', cls: 'dim' }]);
   }
 
   /* ------------------------------------------------------------
    * 输入处理
    * ---------------------------------------------------------- */
   function isEssay(t, lenient) {
-    var plain = t.replace(/[\s\u3000]/g, '');
-    if (lenient) return plain.length >= 30;
+    var p = plain(t);
+    if (lenient) return p.length >= 30;
     var stops = (t.match(/[。!?！?]/g) || []).length;
-    return plain.length >= 80 && stops >= 3;
+    return p.length >= 80 && stops >= 3;
   }
 
   function matchUnit(text) {
-    var s = text.replace(/[\s\u3000]/g, '');
+    var s = plain(text);
     var list = allUnits();
     for (var i = 0; i < list.length; i++) {
       var u = list[i].unit;
@@ -519,29 +663,65 @@
     return null;
   }
 
+  /**
+   * 从一句话里看"是不是要换身份"。
+   * 只在短句里判 —— 习作正文里出现"我是老师"不该被当成指令。
+   */
+  function detectSwitch(t) {
+    var s = plain(t);
+    if (!s || s.length > 14) return null;
+    var asked = /(切换|换成|换到|改成|变成|转为|我当)/.test(s) ||
+      /(身份|模式)$/.test(s) ||
+      /^我(是|要当|当)/.test(s);
+    if (!asked) return null;
+    if (/老师|教师/.test(s)) return 'teacher';
+    if (/学生/.test(s)) return 'student';
+    if (/身份|模式/.test(s)) return 'ask';
+    return null;
+  }
+
+  function isSettingAsk(t) {
+    return /^(设置|接口设置|模型设置|大模型设置|换模型|换个模型|配置|接口|api设置)$/i.test(plain(t));
+  }
+
+  function openSettingByChat() {
+    sayBot('好,打开接口设置 —— 填完关掉就行,我在这儿等着。<br><span class="dim">默认的<b>平台通道</b>不用填任何东西,打开就能用;要用你自己的模型和密钥,才需要在这填。</span>');
+    UI.openSettings();
+  }
+
   function handle(text) {
+    /* 换身份与开设置:任何阶段都认 */
+    var sw = detectSwitch(text);
+    if (sw) { switchRole(sw); return; }
+    if (isSettingAsk(text)) { openSettingByChat(); return; }
+
     if (S.stage === 'await_role') {
       if (isEssay(text, true)) {
         S.pendingEssay = text;
-        sayBot('这篇我先收着(约 ' + text.replace(/[\s\u3000]/g, '').length + ' 字)。<br>不过得先确认身份,我才能决定怎么跟你讲:',
+        sayBot('这篇我先收着(约 ' + plain(text).length + ' 字)。<br>不过得先确认身份,我才能决定怎么跟你讲:',
           roleActions());
-        S.stage = 'await_role';
         return;
       }
       var d = ENG.detectRole(text);
       if (d && d.confident) { setRole(d.role, '从你的说法判断:' + d.reason); return; }
       if (d && d.role) {
-        sayBot('我猜你是<b>' + (d.role === 'teacher' ? '老师' : '学生') + '</b>,但不敢替你定 —— 因为这决定我之后怎么说话。点一下:', roleActions());
+        sayBot('我猜你是<b>' + ROLE_LABEL[d.role] + '</b>,但不敢替你定 —— 因为这决定我之后怎么说话。点一下:', roleActions());
         return;
       }
       sayBot('先告诉我你是哪一种,我才知道该怎么跟你讲:', roleActions());
       return;
     }
 
+    if (S.stage === 'await_img_confirm') {
+      if (isEssay(text, true)) { S.imgPages = null; S.pendingEssay = text; askUnit(); return; }
+      sayBot('先看一眼上面那份文字对不对 —— 直接在框里改好,再点「就按这些字批改」。<br><span class="dim">不想用照片了,也可以把原文完整打给我。</span>');
+      return;
+    }
+
     if (S.stage === 'await_essay') {
       if (isEssay(text, true)) { S.pendingEssay = text; askUnit(); return; }
       if (/怎么|什么|如何|能不能/.test(text)) {
-        sayBot('先把整篇习作发给我,我才能针对它说话。<br><span class="dim">整段粘贴,或者点「图片」上传照片都行 —— 连段落一起发,分段信息会影响层次判断。</span>');
+        sayBot('先把整篇习作发给我,我才能针对它说话。<br><span class="dim">整段粘贴,或者点左下角 <b>＋</b> 发照片都行 —— 连段落一起发,分段信息会影响层次判断。</span>');
         return;
       }
       sayBot('这个太短了,不像一整篇习作。把整篇贴过来吧(建议连段落一起)。');
@@ -571,7 +751,7 @@
     var ta = $('input');
     var text = (ta.value || '').trim();
     if (!text) return;
-    if (text.replace(/[\s\u3000]/g, '').length > 6000) { toast('单次最多处理 6000 字,太长的话分次发'); return; }
+    if (plain(text).length > 6000) { toast('单次最多处理 6000 字,太长的话分次发'); return; }
     ta.value = '';
     autoGrow(ta);
     sayUser(text);
@@ -591,12 +771,20 @@
     if (!list || list._bound) return;
     list._bound = true;
     list.addEventListener('click', function (e) {
+      /* 点缩略图看大图 */
+      var zi = e.target.closest('.imgcell img');
+      if (zi) { UI.openZoom(zi.getAttribute('src')); return; }
+
       var b = e.target.closest('button[data-act]');
       if (!b) return;
       var id = b.getAttribute('data-act');
       if (id === 'open-set') { UI.openSettings(); return; }
+      if (id === 'set-hint') {
+        sayBot('说一句「设置」就行。默认的<b>平台通道</b>不用填任何东西;要用你自己的模型,再把地址、模型名和密钥填进去。');
+        return;
+      }
       var fn = ACT[id];
-      if (fn) fn();
+      if (fn) fn(b.closest('.msg'));
       var q = b.closest('.quick');
       if (q) q.remove();
     });
@@ -606,17 +794,37 @@
     ACT['role:teacher'] = function () { setRole('teacher', '你在对话里选择了老师模式'); };
     ACT['role:student'] = function () { setRole('student', '你在对话里选择了学生模式'); };
     ACT['reask-unit'] = function () {
-      if (!S.pendingEssay && S.essay) { S.pendingEssay = S.essay; }
+      if (!S.pendingEssay && S.essay) S.pendingEssay = S.essay;
       if (!S.pendingEssay) { sayBot('把要批的习作发给我吧。'); S.stage = 'await_essay'; return; }
       askUnit();
     };
     ACT['new-essay'] = function () {
-      S.pendingEssay = ''; S.imgSrc = null;
+      S.pendingEssay = ''; S.imgPages = null; S.imgSrc = null;
       S.stage = 'await_essay';
       sayBot('好,把新的一篇发给我(文字或照片都行)。');
     };
     ACT['switch-role'] = function () {
-      sayBot('切换身份 —— 这会影响我之后怎么说话:', roleActions());
+      sayBot('换成哪一种?这会影响我之后怎么说话:', roleActions());
+    };
+    ACT['img:ok'] = function (msgEl) {
+      var boxes = (msgEl || document).querySelectorAll('.ocr-box');
+      var parts = [];
+      Array.prototype.forEach.call(boxes, function (b) {
+        var t = String(b.value || '').replace(/^\s+|\s+$/g, '');
+        if (t) parts.push(t);
+      });
+      var text = parts.join('\n\n');
+      if (!text) { toast('框里还没有文字 —— 对着照片打进去,或者重发一张清楚点的'); return; }
+      S.imgPages = null;
+      S.stage = 'await_essay';
+      sayUser(text);
+      handle(text);
+    };
+    ACT['img:redo'] = function () {
+      S.imgPages = null;
+      S.imgSrc = null;
+      sayBot('好,把照片重新发一次 —— 点左下角 <b>＋</b>,或者把照片直接拖进来、粘贴进来都行。');
+      S.stage = 'await_essay';
     };
     allUnits().forEach(function (x) {
       ACT['unit:' + x.unit.id] = function () { startGrade(x.unit); };
@@ -633,33 +841,17 @@
       });
     }
     if (btn) btn.addEventListener('click', onSend);
-    if ($('roleChip')) $('roleChip').addEventListener('click', function () {
-      sayBot('切换身份 —— 这会影响我之后怎么说话:', roleActions());
-    });
-    if ($('unitChip')) $('unitChip').addEventListener('click', function () {
-      if (!S.pendingEssay && !S.essay) { sayBot('先把习作发给我,再选单元。'); return; }
-      if (!S.pendingEssay) S.pendingEssay = S.essay;
-      askUnit();
-    });
   }
 
   function boot() {
     UI.init({
       toast: toast,
-      onAdoptText: function (text, mode) {
-        var ta = $('input');
-        if (!ta) return;
-        if (mode === 'append' && ta.value.trim()) ta.value = ta.value.replace(/\s+$/, '') + '\n\n' + text;
-        else ta.value = text;
-        autoGrow(ta);
-        ta.focus();
-      }
+      onFiles: onFiles
     });
     bindInlineActs();
     bindGlobal();
     initComposer();
     UI.renderChannelLine($('aiLine'));
-    renderChips();
 
     /* 平台通道的模型列表要拉一次才知道有哪些可用模型;失败不阻塞对话 */
     if (CLOUD && CLOUD.hasSdk()) {
@@ -676,12 +868,11 @@
       S.ctx = s.ctx || []; S.imgSrc = s.imgSrc || null;
       S.report = s.report; S.reportCtx = s.reportCtx || { roleInfo: { role: s.role, reason: '' } };
       S.stage = 'ready';
-      renderChips();
       sayBot('我们接着上次的聊。上次批的是 <b>' + esc(S.report.unit.no + '《' + S.report.unit.title + '》') + '</b>,卡片还在下面。' +
-        '<br><span class="dim">要批新的一篇,直接发给我;要重新选单元,点上面的「单元」;想换个身份,点「身份」。</span>');
+        '<br><span class="dim">要批新的一篇,直接发给我;想换一副眼睛看同一篇,跟我说「换成老师模式」或「换成学生模式」。</span>');
       var el = addMsg({ who: 'bot', kind: 'card', html: UI.reportHtml(S.report, S.reportCtx) });
       UI.bindToolbar(el, S.report, S.reportCtx);
-      sayBot('还想问什么?', [{ id: 'new-essay', label: '再批一篇', cls: 'dim' }, { id: 'switch-role', label: '切换身份', cls: 'dim' }]);
+      sayBot('还想问什么?', [{ id: 'new-essay', label: '再批一篇', cls: 'dim' }, { id: 'switch-role', label: '换个身份', cls: 'dim' }]);
       return;
     }
     start();
