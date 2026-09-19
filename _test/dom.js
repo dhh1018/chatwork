@@ -118,13 +118,13 @@ function makePage(opt) {
     catch (e) { fail++; console.log('  脚本执行失败 ' + f + ' → ' + e.message); }
   });
 
-  /* jsdom 没有 canvas:把依赖画布的两处换成等价实现,其余逻辑(含纯函数)照常跑 */
+  /* jsdom 没有 canvas:把压缩换成等价实现,其余逻辑(含纯函数)照常跑。
+     压缩结果就是送去识别的 src,不再有单独的导出步骤。 */
   if (w.XZ_IMG) {
     w.XZ_IMG.compress = f => Promise.resolve({
       src: 'data:image/jpeg;base64,SRC_' + encodeURIComponent(f.name),
-      w: 1600, h: 1200, origW: 3024, origH: 4032, scaled: true
+      w: 1600, h: 1200
     });
-    w.XZ_IMG.exportDataUrl = item => Promise.resolve({ url: 'data:image/jpeg;base64,PAGE_' + encodeURIComponent(item.name || 'x'), w: 1200, h: 1600 });
   }
 
   p.$ = id => w.document.getElementById(id);

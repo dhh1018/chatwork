@@ -47,7 +47,7 @@
 
   /**
    * 文件 → 压缩后的图片项。返回纯数据,不做任何界面动作。
-   * → { ok:[{name,src,w,h,origW,origH,scaled}], failed:[原因], skipped:数量 }
+   * → { ok:[{name,src,w,h}], failed:[原因], skipped:数量 }
    */
   function compressFiles(files) {
     var out = { ok: [], failed: [], skipped: 0 };
@@ -64,10 +64,7 @@
 
     return Promise.all(usable.map(function (f) {
       return XIMG.compress(f).then(function (r) {
-        return {
-          name: f.name || '图片', src: r.src, w: r.w, h: r.h,
-          origW: r.origW, origH: r.origH, scaled: !!r.scaled
-        };
+        return { name: f.name || '图片', src: r.src, w: r.w, h: r.h };
       }, function (e) {
         out.failed.push((e && e.message) || String(e));
         return null;
@@ -96,18 +93,16 @@
       chain = chain.then(function () {
         if (opts.signal && opts.signal.aborted) return;
         if (opts.onPage) opts.onPage(i, pages.length);
-        return XIMG.exportDataUrl(items[i]).then(function (r) {
-          return LLM.ocrImage({
-            imageUrl: r.url,
-            index: i + 1,
-            total: pages.length,
-            signal: opts.signal,
-            onDelta: function (d) {
-              piece.text += d;
-              if (opts.onDelta) opts.onDelta(d, i);
-            }
-          });
-        }).then(function (r) {
+        return Promise.resolve(LLM.ocrImage({
+          imageUrl: items[i].src,
+          index: i + 1,
+          total: pages.length,
+          signal: opts.signal,
+          onDelta: function (d) {
+            piece.text += d;
+            if (opts.onDelta) opts.onDelta(d, i);
+          }
+        })).then(function (r) {
           if (opts.signal && opts.signal.aborted) { piece.text = ''; return; }
           if (r && r.unreadable) {
             piece.unreadable = true; piece.text = '';
