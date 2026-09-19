@@ -45,6 +45,31 @@
 
   function isRelative(u) { return !!u && !/^https?:\/\//i.test(u); }
 
+  /* ---------------- 通道选择 ----------------
+   * 自带密钥优先(使用者显式启用),否则走平台免密钥通道(cloud.js)。
+   * 平台通道下前端不持有任何密钥,由服务器校验来源域名。
+   * ------------------------------------------------------- */
+  function platform() { return global.XZ_CLOUD || null; }
+  function platformReady() { var p = platform(); return !!(p && p.readySync && p.readySync()); }
+  function platformVisionReady() { var p = platform(); return !!(p && p.visionReadySync && p.visionReadySync()); }
+  function channel() {
+    var cfg = loadConfig();
+    if (isReady(cfg)) return { type: 'byok', model: cfg.model, vision: cfg.visionModel || '', label: '自带密钥 · ' + cfg.model };
+    if (platformReady()) {
+      var p = platform();
+      return { type: 'platform', model: p.textModel(), vision: p.visionModel(), label: '平台通道 · ' + p.textModel() };
+    }
+    return { type: '', model: '', vision: '', label: '' };
+  }
+  function hasChannel() { return !!channel().type; }
+  function channelLabel() { return channel().label; }
+  function visionModelInUse(cfg) {
+    cfg = cfg || loadConfig();
+    if (cfg.enabled && cfg.visionModel && cfg.baseUrl && (isRelative(cfg.baseUrl) || (cfg.apiKey && cfg.apiKey.length >= 8))) return cfg.visionModel;
+    if (platformVisionReady()) return platform().visionModel();
+    return '';
+  }
+
   /* ---------------- 配置读写 ---------------- */
   function readRaw() {
     try { return JSON.parse(localStorage.getItem(CFG_KEY)) || {}; } catch (e) { return {}; }
@@ -86,22 +111,30 @@
   }
   function statusText(cfg) {
     cfg = cfg || loadConfig();
-    if (!cfg.enabled) return { on: false, text: '本地检测引擎(未启用大模型增强)' };
-    if (!isReady(cfg)) return { on: false, text: '已选大模型但配置不完整,当前仍用本地引擎' };
-    return { on: true, text: '大模型增强已启用 · ' + cfg.model };
+    if (isReady(cfg)) return { on: true, text: '自带密钥已启用 · ' + cfg.model };
+    var ch = channel();
+    if (ch.type === 'platform') {
+      /* 平台通道下文字模型与识图模型都由平台决定,使用者没有别的地方能看见,
+       * 所以这里一并报出来 —— 要拍手写作文的人得先知道识图能不能用。 */
+      return { on: true, text: ch.label + (ch.vision ? ' · 识图 ' + ch.vision : ' · 该平台无识图模型') };
+    }
+    if (cfg.enabled) return { on: false, text: '已选大模型但配置不完整,当前仍用本地引擎' };
+    return { on: false, text: '本地检测引擎(大模型通道未接通)' };
   }
 
-  /** 图片文字识别单独判断:需要额外填写视觉模型名 */
+  /** 图片文字识别单独判断:自带视觉模型,或平台通道提供识图模型 */
   function isVisionReady(cfg) {
-    cfg = cfg || loadConfig();
-    if (!cfg.enabled || !cfg.baseUrl || !cfg.visionModel) return false;
-    if (isRelative(cfg.baseUrl)) return true;
-    return !!(cfg.apiKey && cfg.apiKey.length >= 8);
+    return !!visionModelInUse(cfg);
   }
   function visionStatusText(cfg) {
     cfg = cfg || loadConfig();
-    if (isVisionReady(cfg)) return { on: true, text: '图片文字识别已就绪 · ' + cfg.visionModel };
-    if (!cfg.enabled) return { on: false, text: '未启用大模型,图片文字需对照录入(也可启用后自动识别)', reason: 'off' };
+    var m = visionModelInUse(cfg);
+    if (m) {
+      var byok = !!(cfg.enabled && cfg.visionModel && cfg.baseUrl && (isRelative(cfg.baseUrl) || (cfg.apiKey && cfg.apiKey.length >= 8)));
+      return { on: true, text: '图片文字识别已就绪 · ' + m + (byok ? '(自带密钥)' : '(平台通道)') };
+    }
+    if (platformReady()) return { on: false, text: '平台通道暂无可用的识图模型,图片文字需对照录入(也可在设置里填自己的视觉模型)', reason: 'nomodel' };
+    if (!cfg.enabled) return { on: false, text: '未接通大模型,图片文字需对照录入', reason: 'off' };
     if (!cfg.visionModel) return { on: false, text: '尚未填写视觉模型名,图片文字需对照录入', reason: 'nomodel' };
     return { on: false, text: '识图配置不完整(缺密钥或接口地址),图片文字需对照录入', reason: 'incomplete' };
   }
@@ -274,12 +307,34 @@
   }
 
   /**
-   * 流式生成。
-   * opts: { messages, timeout, onDelta, signal }
+   * 流式生成(统一入口)。
+   * opts: { messages, model, vision, timeout, onDelta, signal, conversationId }
    * 返回完整文本;失败抛错。
+   *
+   * 通道分流:自带密钥优先;未配置时走平台免密钥通道(cloud.js)。
+   * 前端在任何一条通道下都不持有长期密钥。
    */
   function generateText(opts) {
+    opts = opts || {};
     var cfg = loadConfig();
+    var ch = channel();
+
+    if (ch.type === 'platform') {
+      var p = platform();
+      var wantVision = !!opts.vision;
+      var pmodel = opts.model || (wantVision ? ch.vision : ch.model);
+      if (!pmodel) {
+        return Promise.reject(new Error(wantVision
+          ? '平台通道没有可用的识图模型,请在设置里填自己的视觉模型'
+          : '平台通道暂未提供可用模型'));
+      }
+      return p.chat({
+        messages: opts.messages, model: pmodel, temperature: opts.temperature,
+        maxTokens: opts.maxTokens, timeout: opts.timeout, onDelta: opts.onDelta,
+        signal: opts.signal, conversationId: opts.conversationId
+      });
+    }
+
     var ctrl = new AbortController();
     var timer = null;
     var timeout = opts.timeout || 90000;
@@ -372,15 +427,21 @@
   /** 连通性测试:发一句最短请求,把错误原文回传,便于排障 */
   function testConnection() {
     var cfg = loadConfig();
-    if (!cfg.baseUrl || !cfg.model) return Promise.resolve({ ok: false, msg: '请先填写接口地址与模型名' });
-    if (!isRelative(cfg.baseUrl) && !cfg.apiKey) return Promise.resolve({ ok: false, msg: '请先填写 API Key' });
+    var ch = channel();
+    if (ch.type === 'byok' && !cfg.baseUrl) return Promise.resolve({ ok: false, msg: '请先填写接口地址与模型名' });
+    if (ch.type === 'byok' && !cfg.model) return Promise.resolve({ ok: false, msg: '请先填写接口地址与模型名' });
+    if (ch.type === 'byok' && !isRelative(cfg.baseUrl) && !cfg.apiKey && !cfg.enabled) return Promise.resolve({ ok: false, msg: '请先填写 API Key' });
+    if (!ch.type) return Promise.resolve({ ok: false, msg: '尚未接通任何大模型通道' });
     var t0 = Date.now();
     return generateText({
-      messages: [{ role: 'user', content: '回复两个字:正常' }],
+      messages: [
+        { role: 'system', content: '你是一个连通性测试助手,只需极简回应,不要展开。' },
+        { role: 'user', content: '回复两个字:正常' }
+      ],
       maxTokens: 16,
       timeout: 30000
     }).then(function (txt) {
-      return { ok: true, msg: '连接成功(' + (Date.now() - t0) + ' ms),模型回复:' + String(txt).slice(0, 40) };
+      return { ok: true, msg: '连接成功(' + (Date.now() - t0) + ' ms,' + ch.label + '),模型回复:' + String(txt).slice(0, 40) };
     }, function (e) {
       return { ok: false, msg: '连接失败:' + (e && e.message || e) };
     });
@@ -481,7 +542,8 @@
     var messages = buildOcrMessages(opts.imageUrl, opts);
     return generateText({
       messages: messages,
-      model: cfg.visionModel,
+      model: visionModelInUse(cfg),
+      vision: true,
       temperature: 0.1,
       maxTokens: opts.maxTokens || 2200,
       timeout: opts.timeout || 120000,
@@ -666,14 +728,16 @@
   }
 
   /* ---------------- 对外主流程 ---------------- */
-  /**
-   * run(opts) → Promise<{ report, raw, ms, issues }>
-   * opts: { role, unit, bookName, essay, note, local, onDelta, signal }
-   */
-  function run(opts) {
+/**
+ * run(opts) → Promise<{ report, raw, ms, issues }>
+ * opts: { role, unit, bookName, essay, note, local, onDelta, signal, conversationId }
+ */
+function run(opts) {
     var t0 = Date.now();
     var messages = buildMessages(opts);
-    return generateText({ messages: messages, onDelta: opts.onDelta, signal: opts.signal })
+    /* conversationId 只在平台通道起作用(见 generateText):批改与后续追问
+     * 要挂在同一段对话下,否则多轮在平台侧会被拆成互不相干的请求。 */
+    return generateText({ messages: messages, onDelta: opts.onDelta, signal: opts.signal, conversationId: opts.conversationId })
       .then(function (raw) {
         var rep = opts.role === 'teacher'
           ? normalizeTeacher(raw, opts.local, opts.essay)
@@ -698,6 +762,7 @@
     loadConfig: loadConfig, saveConfig: saveConfig, clearKey: clearKey,
     isReady: isReady, statusText: statusText, isRelative: isRelative,
     isVisionReady: isVisionReady, visionStatusText: visionStatusText,
+    channel: channel, hasChannel: hasChannel, channelLabel: channelLabel, visionModelInUse: visionModelInUse,
     OCR_SYS: OCR_SYS, buildOcrMessages: buildOcrMessages, cleanOcr: cleanOcr, ocrImage: ocrImage,
     buildMessages: buildMessages, generateText: generateText, testConnection: testConnection,
     matchQuote: matchQuote, stripDemo: stripDemo,
