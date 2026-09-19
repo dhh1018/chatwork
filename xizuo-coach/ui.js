@@ -593,7 +593,6 @@
 
   global.XZ_UI = {
     init: init,
-    pickImages: pickImages,
     compressFiles: compressFiles,
     ocrPages: ocrPages,
     openZoom: openZoom,
@@ -601,7 +600,6 @@
     openSettings: openSettings, closeSettings: closeSettings,
     reportHtml: reportHtml,
     toMarkdown: toMarkdown,
-    bindToolbar: bindToolbar,
-    LEVEL: LEVEL
+    bindToolbar: bindToolbar
   };
 })(typeof window !== 'undefined' ? window : this);

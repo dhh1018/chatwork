@@ -73,8 +73,6 @@
   }
 
   function isQuota(e) { return /^quota_/.test(codeOf(e)); }
-  function isAuth(e) { return /^auth_/.test(codeOf(e)); }
-  function isRetryable(e) { return /^gateway_|^model_|^internal_/.test(codeOf(e)); }
 
   /** 拉取可用模型列表;空列表是合法结果,必须显式处理 */
   function loadModels() {
@@ -107,8 +105,6 @@
 
   function textModel() { return S.textId; }
   function visionModel() { return S.visionId; }
-  function modelCount() { return S.models ? S.models.filter(function (m) { return m && m.disabled !== true; }).length : 0; }
-  function errorText() { return S.err; }
 
   /** 平台通道是否可用(已加载脚本且已拉到一个可用文本模型) */
   function readySync() { return !!client() && !!S.textId; }
@@ -219,14 +215,10 @@
     chat: chat,
     textModel: textModel,
     visionModel: visionModel,
-    modelCount: modelCount,
     readySync: readySync,
     visionReadySync: visionReadySync,
-    errorText: errorText,
     statusText: statusText,
     isQuota: isQuota,
-    isAuth: isAuth,
-    isRetryable: isRetryable,
     errText: errText
   };
 })(typeof window !== 'undefined' ? window : this);

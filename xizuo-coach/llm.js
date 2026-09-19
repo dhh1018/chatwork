@@ -766,7 +766,6 @@ function run(opts) {
     OCR_SYS: OCR_SYS, buildOcrMessages: buildOcrMessages, cleanOcr: cleanOcr, ocrImage: ocrImage,
     buildMessages: buildMessages, generateText: generateText, testConnection: testConnection,
     matchQuote: matchQuote, stripDemo: stripDemo,
-    splitSections: splitSections, field: field, numbered: numbered,
     normalizeTeacher: normalizeTeacher, normalizeStudent: normalizeStudent,
     run: run
   };

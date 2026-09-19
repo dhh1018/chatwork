@@ -60,8 +60,6 @@ main {
   border-radius: var(--radius);
   padding: 18px;
 }
-.input-panel { position: sticky; top: 16px; }
-@media (max-width: 900px) { .input-panel { position: static; } }
 
 .field { margin-bottom: 14px; }
 .field > label, .field > summary {
@@ -71,23 +69,6 @@ main {
   margin-bottom: 7px;
   font-weight: 500;
 }
-.field .count { float: right; color: var(--text-3); font-weight: 400; }
-
-.seg { display: flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 3px; gap: 3px; }
-.seg button {
-  flex: 1;
-  border: 0;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 13px;
-  padding: 7px 4px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background .15s, color .15s;
-}
-.seg button:hover { color: var(--text); }
-.seg button.active { background: var(--surface); color: var(--brand); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 
 select, textarea, input[type=text] {
   width: 100%;
@@ -102,21 +83,7 @@ select, textarea, input[type=text] {
 }
 select:focus, textarea:focus, input:focus { border-color: var(--brand); background: var(--surface); }
 textarea { resize: vertical; min-height: 92px; line-height: 1.7; }
-#essay { min-height: 240px; }
 .row { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 10px; }
-
-.unit-brief {
-  background: var(--surface-2);
-  border: 1px dashed var(--line-2);
-  border-radius: var(--radius-s);
-  padding: 11px 12px;
-  font-size: 13px;
-  color: var(--text-2);
-  margin-bottom: 14px;
-}
-.unit-brief b { color: var(--text); font-weight: 600; }
-.unit-brief ul { margin: 6px 0 0; padding-left: 18px; }
-.unit-brief li { margin: 2px 0; }
 
 .actions { display: flex; gap: 10px; margin-top: 4px; }
 button.primary {
@@ -146,8 +113,6 @@ button.ghost {
 }
 button.ghost:hover { color: var(--text); border-color: var(--text-3); }
 .hint { font-size: 12px; color: var(--text-3); margin: 10px 0 0; line-height: 1.6; }
-
-.empty { color: var(--text-3); font-size: 14px; text-align: center; padding: 70px 20px; }
 
 .badge-role {
   display: flex; align-items: center; gap: 9px;
@@ -246,7 +211,7 @@ details.more ul { margin: 6px 0; padding-left: 18px; }
 
 @media print {
   body { background: #fff; }
-  .toolbar, header.top, .toast, .ai-box, .ai-line { display: none !important; }
+  .toolbar, header.top, .toast, .ai-line { display: none !important; }
   #setModal, .zoom { display: none !important; }
   main { padding: 0; max-width: none; }
   .panel { border: 0; padding: 0; }
@@ -264,16 +229,8 @@ details.more ul { margin: 6px 0; padding-left: 18px; }
   font-family: inherit; font-size: 12px; cursor: pointer; padding: 0 2px; text-decoration: underline;
 }
 
-.ai-box {
-  border: 1px solid var(--brand);
-  background: var(--brand-soft);
-  border-radius: var(--radius-s);
-  padding: 12px 14px;
-  margin-bottom: 16px;
-}
 .ai-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .ai-head b { font-weight: 600; }
-.ai-model { color: var(--text-3); font-size: 12px; }
 .ai-head .linkbtn { margin-left: auto; }
 .ai-raw {
   margin: 9px 0 0; max-height: 190px; overflow: auto;
@@ -282,7 +239,6 @@ details.more ul { margin: 6px 0; padding-left: 18px; }
   background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px;
   color: var(--text-2);
 }
-.ai-tip { font-size: 12px; color: var(--text-3); margin: 8px 0 0; }
 .spinner {
   width: 12px; height: 12px; flex: none; border-radius: 50%;
   border: 2px solid var(--brand); border-top-color: transparent;
@@ -295,16 +251,8 @@ details.more ul { margin: 6px 0; padding-left: 18px; }
   font-size: 12px; padding: 3px 9px; border-radius: 20px;
   background: var(--brand-soft); color: var(--brand);
 }
-.chipline { display: flex; flex-wrap: wrap; gap: 6px; }
 .ai-rawwrap { margin-top: 14px; }
 .ai-rawwrap .ai-raw { max-height: 320px; }
-
-.ai-fail {
-  border: 1px solid var(--warn); background: var(--warn-soft);
-  border-radius: var(--radius-s); padding: 12px 14px; margin-bottom: 16px; font-size: 13px; line-height: 1.75;
-}
-.ai-fail b { display: block; margin-bottom: 4px; }
-.ai-fail .reason { color: var(--text-2); font-size: 12px; word-break: break-word; }
 
 .card.demo { background: var(--surface-2); border-left: 3px solid var(--line-2); }
 .promise { font-size: 12px; color: var(--text-3); margin: 10px 0 0; }
@@ -347,9 +295,6 @@ details.more ul { margin: 6px 0; padding-left: 18px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block; }
 .dot.on { background: var(--ok); }
 .dot.off { background: var(--line-2); }
-.grow { flex: 1 1 auto; }
-
-button.ghost.sm { padding: 4px 9px; font-size: 12px; }
 
 /* 图片消息:照片本身就是一条消息,和打字发出来的东西同级 */
 .msg.k-img .bubble { background: transparent; border: 0; padding: 0; }
